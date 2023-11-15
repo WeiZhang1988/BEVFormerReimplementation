@@ -1,9 +1,7 @@
 import torch
-import torch.nn.functional as F
 from torch import nn
+import torch.nn.functional as F
 from einops import rearrange, einsum
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class SpatialCrossAttention(nn.Module):
   """
@@ -12,7 +10,7 @@ class SpatialCrossAttention(nn.Module):
       Default: 6
     dropout  (float): The drop out rate
       Default: 0.1
-    deformable_attention (nn): as name suggests
+    deformable_attention (nn): as name 
     -----MultiScaleDeformableAttention3D arguments-----
     embed_dims (int): The embedding dimension of attention. The same as inputs embedding dimension.
       Default: 256
@@ -22,8 +20,11 @@ class SpatialCrossAttention(nn.Module):
       Default: 4
     num_points (int): The number of sampling points
       Default: 4
+    -----Device-----
+    device (torch.device): The device
+      Default: cpu
   """
-  def __init__(self,num_cams=6,dropout=0.1,embed_dims=256,num_heads=8,num_levels=4,num_points=4):
+  def __init__(self,num_cams=6,dropout=0.1,embed_dims=256,num_heads=8,num_levels=4,num_points=4,device=torch.device("cpu")):
     super().__init__()
     self.num_cams     = num_cams
     self.dropout      = dropout
@@ -31,9 +32,10 @@ class SpatialCrossAttention(nn.Module):
     self.num_heads    = num_heads
     self.num_levels   = num_levels
     self.num_points   = num_points
-    self.NN_dropout   = nn.Dropout(dropout)
-    self.NN_attention = MultiScaleDeformableAttention3D(embed_dims=embed_dims,num_heads=num_heads,num_levels=num_levels,num_points=num_points)
-    self.NN_output    = nn.Linear(self.embed_dims, self.embed_dims)
+    self.device       = device
+    self.NN_dropout   = nn.Dropout(dropout).to(device)
+    self.NN_attention = MultiScaleDeformableAttention3D(embed_dims=embed_dims,num_heads=num_heads,num_levels=num_levels,num_points=num_points).to(device)
+    self.NN_output    = nn.Linear(self.embed_dims, self.embed_dims).to(device)
   def forward(self,query,key,value,reference_points=None,spatial_shapes=None,reference_points_cam=None,bev_mask=None):
     """
     Args:
@@ -133,11 +135,14 @@ class TemporalSelfAttention(nn.Module):
       Default: 4
     num_points (int): The number of sampling points
       Default: 4
+    -----Device-----
+    device (torch.device): The device
+      Default: cpu
   Note:
     1, num_points of MultiScaleDeformableAttention3D should be the argument num_points * num_bev_queue
     2, num_query, num_key, num_value are all extended by num_bev_queue to num_query * num_bev_queue, num_key * num_bev_queue, num_value * num_bev_queue
   """
-  def __init__(self,num_bev_queue=2,dropout=0.1,embed_dims=256,num_heads=8,num_levels=4,num_points=4):
+  def __init__(self,num_bev_queue=2,dropout=0.1,embed_dims=256,num_heads=8,num_levels=4,num_points=4,device=torch.device("cpu")):
     super().__init__()
     self.num_bev_queue  = num_bev_queue
     self.dropout        = dropout
@@ -145,9 +150,10 @@ class TemporalSelfAttention(nn.Module):
     self.num_heads      = num_heads
     self.num_levels     = num_levels
     self.num_points     = num_points
-    self.NN_dropout     = nn.Dropout(dropout)
-    self.NN_attention   = MultiScaleDeformableAttention3D(embed_dims=embed_dims,num_heads=num_heads,num_levels=num_levels,num_points=num_points*num_bev_queue)
-    self.NN_output      = nn.Linear(self.embed_dims, self.embed_dims)
+    self.device         = device
+    self.NN_dropout     = nn.Dropout(dropout).to(device)
+    self.NN_attention   = MultiScaleDeformableAttention3D(embed_dims=embed_dims,num_heads=num_heads,num_levels=num_levels,num_points=num_points*num_bev_queue).to(device)
+    self.NN_output      = nn.Linear(self.embed_dims, self.embed_dims).to(device)
     assert self.num_bev_queue>0, "value length must be larger than zero"
   def forward(self,query,key_hist=[],value_hist=[],reference_points=None,spatial_shapes=None):
     """
