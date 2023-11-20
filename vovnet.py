@@ -34,6 +34,12 @@ class VoVNet(nn.Module):
       osa_stages.append(OSA_Stage(stage_in_channels[i],stage_middle_channels[i],stage_out_channels[i],num_block_per_stage[i],num_layer_per_block,i+2,device))
     self.NN_stages = nn.Sequential(*osa_stages)
   def forward(self,x):
+    """
+    Args:
+      x         (Tensor [bs, num_channels, height, width]): The input images
+    Returns:
+      Features  (tensor [bs, features_dom]): The output features. The features dimension is the last of stage_out_channels
+    """
     x = self.NN_stem(x)
     x = self.NN_stages(x)
     x = F.adaptive_avg_pool2d(x, (1, 1)).view(x.size(0), -1)
