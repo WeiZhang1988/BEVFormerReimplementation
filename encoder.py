@@ -12,63 +12,87 @@ class Encoder(nn.Module):
 class BEVFormerLayer(nn.Module):
   """
   Args:
-    num_bev_queue (int):   The number of BEVs to be used
+    -----Spatial-----
+    spat_num_cams      (int):   [spatial attention] The number of cameras
+      Default: 6 
+    spat_num_zAnchors  (int):   [spatial attention] The number of z anchors
+      Default: 4 
+    spat_dropout       (float): [spatial attention] The drop out rate
+      Default: 0.1 
+    spat_embed_dims    (int):   [spatial attention] The embedding dimension of attention. The same as inputs embedding dimension.
+      Default: 256    
+    spat_num_heads     (int):   [spatial attention] The number of heads.
+      Default: 8    
+    spat_num_levels    (int):   [spatial attention] The number of scale levels in a single sequence
+      Default: 4    
+    spat_num_points    (int):   [spatial attention] The number of sampling points in a single level
       Default: 2
-    num_cams      (int):   The number of cameras
-      Default: 6
-    dropout       (float): The drop out rate
-      Default: 0.1
-    deformable_attention (nn): as name suggests
-    -----MultiScaleDeformableAttention3D arguments-----
-    embed_dims (int): The embedding dimension of attention. The same as inputs embedding dimension.
-      Default: 256
-    num_heads  (int): The number of heads.
-      Default: 8
-    num_levels (int): The number of scale levels
-      Default: 4
-    num_points (int): The number of sampling points
+    -----Temporal-----
+    temp_num_sequences (int):   [temporal attention] The number of sequences of queries, kies and values.
+      Default: 2 
+    temp_dropout       (float): [temporal attention] The drop out rate
+      Default: 0.1 
+    temp_embed_dims    (int):   [temporal attention] The embedding dimension of attention. The same as inputs embedding dimension.
+      Default: 256   
+    temp_num_heads     (int):   [temporal attention] The number of heads.
+      Default: 8   
+    temp_num_levels    (int):   [temporal attention] The number of scale levels in a single sequence
+      Default: 4   
+    temp_num_points    (int):   [temporal attention] The number of sampling points in a single level
       Default: 4
     -----Device-----
     device (torch.device): The device
       Default: cpu
   """
-  def __init__(self,num_bev_queue=2,num_cams=6,dropout=0.1,embed_dims=256,num_heads=8,num_levels=4,num_points=4,device=torch.device("cpu")):
+  def __init__(self,spat_num_cams=6,spat_num_zAnchors=4,spat_dropout=0.1,spat_embed_dims=256,spat_num_heads=8,spat_num_levels=4,spat_num_points=2,\
+                    temp_num_sequences=2,temp_dropout=0.1,temp_embed_dims=256,temp_num_heads=8,temp_num_levels=4,temp_num_points=4,device=torch.device("cpu")):
     super().__init__()
-    self.num_bev_queue  = num_bev_queue
-    self.num_cams       = num_cams
-    self.dropout        = dropout
-    self.embed_dims     = embed_dims
-    self.num_heads      = num_heads
-    self.num_levels     = num_levels
-    self.num_points     = num_points
-    self.device         = device
-    self.NN_tempAttn    = TemporalSelfAttention(              dropout,embed_dims,num_heads,num_levels,num_points,num_bev_queue,device)
-    self.NN_spatAttn    = SpatialCrossAttention(num_cams,     dropout,embed_dims,num_heads,num_levels,num_points,1,device)
+    assert spat_embed_dims == temp_embed_dims, "embed_dims for spatial and temperal attention must be the same"
+    self.spat_num_cams        = spat_num_cams
+    self.spat_num_zAnchors    = spat_num_zAnchors
+    self.spat_dropout         = spat_dropout
+    self.spat_embed_dims      = spat_embed_dims
+    self.spat_num_heads       = spat_num_heads
+    self.spat_num_levels      = spat_num_levels
+    self.spat_num_points      = spat_num_points
+    self.temp_num_sequences   = temp_num_sequences
+    self.temp_dropout         = temp_dropout
+    self.temp_embed_dims      = temp_embed_dims
+    self.temp_num_heads       = temp_num_heads
+    self.temp_num_levels      = temp_num_levels
+    self.temp_num_points      = temp_num_points
+    self.device               = device
+    embed_dims                = spat_embed_dims
+    self.embed_dims           = embed_dims
+    self.NN_tempAttn    = TemporalSelfAttention(temp_num_sequences,temp_dropout,temp_embed_dims,temp_num_heads,temp_num_levels,temp_num_points,device)
+    self.NN_spatAttn    = SpatialCrossAttention(spat_num_cams,spat_num_zAnchors,spat_dropout,spat_embed_dims,spat_num_heads,spat_num_levels,spat_num_points,device)
     self.NN_addNorm1    = AddAndNormLayer(None,embed_dims,device=device)
     self.NN_addNorm2    = AddAndNormLayer(None,embed_dims,device=device)
     self.NN_addNorm3    = AddAndNormLayer(None,embed_dims,device=device)
     self.NN_ffn         = nn.Linear(embed_dims,embed_dims,device=device)
-  def forward(self,spatAttn_key,spatAttn_value,tempAttn_query,tempAttn_key_hist=[],tempAttn_value_hist=[],reference_points=None,spatial_shapes=None,reference_points_cam=None,bev_mask=None):
+  def forward(self,spat_key,spat_value,temp_query,temp_key_hist=[],temp_value_hist=[],spat_spatial_shapes=None,spat_reference_points=None,spat_reference_points_cam=None,spat_bev_mask=None,temp_spatial_shapes=None,temp_reference_points=None):
     """
     Args:
-      spatAttn_key         (Tensor [num_cams, bs, num_key, embed_dims]):     The spatial key
-      spatAttn_value       (Tensor [num_cams, bs, num_value, embed_dims]):   The spatial value
-      tempAttn_query       (Tensor [bs, num_query, embed_dims]):             The temporal query
-      tempAttn_key_hist    (list of Tensor [bs, num_key,  embed_dims]s):     The temporal key history. num_key should equel to num_levels * num_points
-      tempAttn_value_hist  (list of Tensor [bs, num_value,embed_dims]s):     The temporal value history
-      reference_points     (Tensor [bs, num_query, num_levels, 2]):          The normalized reference points. Passed though to multi scale deformable attention layer
-      spatial_shapes       (Tensor [num_levels, 2]):                         The spatial shape of features in different levels. Passed though to multi scale deformable attention layer
-      reference_points_cam (Tensor [num_cam, bs, num_query, num_levels, 2]): The image pixel ratio projected from reference points to each camera
-      bev_mask             (Tensor [num_cam, bs, num_query, num_levels]):    Which of reference_points_cam is valid
+      spat_key                    (Tensor [num_cams, bs, num_key, embed_dims]):       [spatial attention] The key
+      spat_value                  (Tensor [num_cams, bs, num_value, embed_dims]):     [spatial attention] The value
+      temp_query                  (Tensor [bs, num_query, embed_dims]):               [temporal attention] The query
+      temp_key_hist               (list of Tensor [bs, num_key,  embed_dims]s):       [temporal attention] The key history
+      temp_value_hist             (list of Tensor [bs, num_value,embed_dims]s):       [temporal attention] The value history
+      spat_spatial_shapes         (Tensor [num_levels, 2]):                           [spatial attention] The spatial shape of features in different levels
+      spat_reference_points       (Tensor [bs, num_query, 4]):                        [spatial attention] The normalized reference points
+      spat_reference_points_cam   (Tensor [num_cam, bs, num_query, num_zAnchor, 2]):  [spatial attention] The image pixel ratio projected from reference points to each camera
+      spat_bev_mask               (Tensor [num_cam, bs, num_query, num_zAnchor]):     [spatial attention] Which of reference_points_cam is valid
+      temp_spatial_shapes         (Tensor [num_levels, 2]):                           [temporal attention] The spatial shape of features in different levels
+      temp_reference_points       (Tensor [bs, num_query, num_levels, 2]):            [temporal attention] The normalized reference points
     Returns:
-      currentBEV           (Tensor [bs, num_query, emded_dims])
+      currentBEV                  (Tensor [bs, num_query, emded_dims])
     """
-    tempAttn = self.NN_tempAttn(query=tempAttn_query,key_hist=tempAttn_key_hist,value_hist=tempAttn_value_hist,reference_points=reference_points,spatial_shapes=spatial_shapes)
-    addNorm1 = self.NN_addNorm1(x=tempAttn,y=tempAttn_query)
-    spatAttn = self.NN_spatAttn(query=addNorm1,key=spatAttn_key,value=spatAttn_value,reference_points=None,spatial_shapes=spatial_shapes,reference_points_cam=reference_points_cam,bev_mask=bev_mask)
-    addNorm2 = self.NN_addNorm1(x=spatAttn,y=addNorm1)
+    tempAttn = self.NN_tempAttn(query=temp_query,key_hist=temp_key_hist,value_hist=temp_value_hist,reference_points=temp_reference_points,spatial_shapes=temp_spatial_shapes)
+    addNorm1 = self.NN_addNorm1(x=tempAttn,y=temp_query)
+    spatAttn = self.NN_spatAttn(query=addNorm1,key=spat_key,value=spat_value,reference_points=spat_reference_points,spatial_shapes=spat_spatial_shapes,reference_points_cam=spat_reference_points_cam,bev_mask=spat_bev_mask)
+    addNorm2 = self.NN_addNorm2(x=spatAttn,y=addNorm1)
     ffn      = self.NN_ffn(addNorm2)
-    addNorm3 = self.NN_addNorm1(x=ffn,y=addNorm2)
+    addNorm3 = self.NN_addNorm3(x=ffn,y=addNorm2)
     return addNorm3
 
 
