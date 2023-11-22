@@ -2,14 +2,13 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-
-class VoVNet(nn.Module):
+class BackBone(nn.Module):
   """
   Args:
     stage_middle_channels     (int list): The stages' middle layer channels numbers
-      Default: [128, 160, 192, 224]
+      Default: [64, 80, 96, 112]
     stage_out_channels        (int list): The stages' output channels numbers
-      Default: [256, 512, 768, 1024]
+      Default: [128, 256, 384, 512]
     num_block_per_stage       (int list): The number of block per stage
       Default: [1, 1, 2, 2]
     num_layer_per_block       (int):      The number of layer per block
@@ -18,7 +17,41 @@ class VoVNet(nn.Module):
     device (torch.device): The device
       Default: cpu
   """
-  def __init__(self,stage_middle_channels=[128, 160, 192, 224],stage_out_channels=[256, 512, 768, 1024],num_block_per_stage=[1, 1, 2, 2],num_layer_per_block=5,device=torch.device("cpu")):
+  def __init__(self,stage_middle_channels=[64, 80, 96, 112],stage_out_channels=[128, 256, 384, 512],num_block_per_stage=[1, 1, 2, 2],num_layer_per_block=5,device=torch.device("cpu")):
+    super().__init__()
+    self.stage_middle_channels  = stage_middle_channels
+    self.stage_out_channels     = stage_out_channels
+    self.num_block_per_stage    = num_block_per_stage
+    self.num_layer_per_block    = num_layer_per_block
+    self.device                 = device
+    self.NN_vovnet              = VoVNet(stage_middle_channels,stage_out_channels,num_block_per_stage,num_layer_per_block,device)
+  def forward(self,images):
+    """
+    Args:
+      images    (Tensor [num_cams, bs, num_channels, height, width]): The input images
+    Returns:
+      Features  (Tensor [num_cams, bs, feature_dims]): The output features. The features dimension is the last of stage_out_channels
+    """
+    num_cams, bs, num_channels, height, width = images.size()
+    features = self.NN_vovnet(images.view(num_cams * bs, num_channels, height, width)).view(num_cams, bs, -1)
+    return features
+
+class VoVNet(nn.Module):
+  """
+  Args:
+    stage_middle_channels     (int list): The stages' middle layer channels numbers
+      Default: [64, 80, 96, 112]
+    stage_out_channels        (int list): The stages' output channels numbers
+      Default: [128, 256, 384, 512]
+    num_block_per_stage       (int list): The number of block per stage
+      Default: [1, 1, 2, 2]
+    num_layer_per_block       (int):      The number of layer per block
+      Default: 5
+    -----Device-----
+    device (torch.device): The device
+      Default: cpu
+  """
+  def __init__(self,stage_middle_channels=[64, 80, 96, 112],stage_out_channels=[128, 256, 384, 512],num_block_per_stage=[1, 1, 1, 1],num_layer_per_block=5,device=torch.device("cpu")):
     super().__init__()
     assert len(stage_middle_channels) == len(stage_out_channels) and len(stage_out_channels) == len(num_block_per_stage), "all list arguments must have same length"
     self.stage_middle_channels  = stage_middle_channels
@@ -26,24 +59,27 @@ class VoVNet(nn.Module):
     self.num_block_per_stage    = num_block_per_stage
     self.num_layer_per_block    = num_layer_per_block
     self.device                 = device
-    self.NN_stem = nn.Sequential(Conv3x3(3,64).to(device),Conv3x3(64,64).to(device),Conv3x3(64,128).to(device))
+    self.NN_stem = nn.Sequential(Conv3x3(3,64,2).to(device),Conv3x3(64,64,1).to(device),Conv3x3(64,128,1).to(device))
     stem_out_channels = [128]
     stage_in_channels = stem_out_channels + stage_out_channels[:-1]
     osa_stages = []
     for i in range(len(stage_middle_channels)):
       osa_stages.append(OSA_Stage(stage_in_channels[i],stage_middle_channels[i],stage_out_channels[i],num_block_per_stage[i],num_layer_per_block,i+2,device))
     self.NN_stages = nn.Sequential(*osa_stages)
-  def forward(self,x):
+  def forward(self,images):
     """
     Args:
-      x         (Tensor [bs, num_channels, height, width]): The input images
+      images    (Tensor [bs, num_channels, height, width]):                           The input images
     Returns:
-      Features  (tensor [bs, features_dom]): The output features. The features dimension is the last of stage_out_channels
+      Features  (tensor [bs, stage_out_channels[-1], height/2/2/2/2, width/2/2/2/2]): The output features. The features dimension is the last of stage_out_channels
     """
-    x = self.NN_stem(x)
-    x = self.NN_stages(x)
-    x = F.adaptive_avg_pool2d(x, (1, 1)).view(x.size(0), -1)
-    return x
+    # images      [bs, num_channels,            height,         width]
+    # ->features  [bs, 128(fixed in the impl.), height/2,       width/2]
+    # --------->  [bs, stage_out_channels[-1],  height/2/2/2/2, width/2/2/2/2]
+    features = self.NN_stem(images)
+    features = self.NN_stages(features)
+    #features = F.adaptive_avg_pool2d(features, (1, 1)).view(features.size(0), -1)
+    return features
 
 class OSA_Stage(nn.Module):
   """

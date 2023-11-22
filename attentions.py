@@ -111,7 +111,7 @@ class SpatialCrossAttention(nn.Module):
     sampling_offsets = self.NN_sampling_offsets(query_rebatch).view(bc, nq, self.num_heads, self.num_levels, self.num_points * self.num_zAnchors, self.xy)
     assert nk == self.num_levels * self.num_points * self.num_zAnchors,   "total key number does not match numbers of levels, points and z anchors"
     assert nv == self.num_levels * self.num_points * self.num_zAnchors,   "total value number does not match numbers of levels, points and z anchors"
-    #assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
+    assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == nv
     q = self.NN_to_Q(query_rebatch) 
     k = self.NN_to_K(key)    
     v = self.NN_to_V(value) 

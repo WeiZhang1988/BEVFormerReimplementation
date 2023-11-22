@@ -2,20 +2,30 @@
 # in normal use, the assert should ramain
 
 from attentions import *
-from vovnet import *
+from backbone import *
 from encoder import *
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def test_vov():
-  x = torch.rand(size=(32,3,96,96)).to(device)
-  vov = VoVNet(device=device)
-  res = vov(x)
-  print("vov ", res.shape)
+def test_backbone():
+  batch_size            = 8
+  num_cams              = 2
+  stage_middle_channels = [64, 80, 96, 112]
+  stage_out_channels    = [128, 256, 384, 512]
+  num_block_per_stage   = [1, 1, 2, 2]
+  num_layer_per_block   = 5
+
+
+  x = torch.rand(size=(num_cams,batch_size,3,96,96)).to(device)
+  backbone = BackBone(stage_middle_channels,stage_out_channels,num_block_per_stage,num_layer_per_block,device)
+  res = backbone(x)
+  print("bkb ", res.shape)
 
 def test_spatial_cross_attention():
-  batch_size   = 32
-  num_cams     = 6
+  batch_size   = 8
+  num_cams     = 2
   num_zAnchors = 4
   dropout      = 0.1
   embed_dims   = 256
@@ -40,7 +50,7 @@ def test_spatial_cross_attention():
   print("sca ", res.shape)
 
 def test_temporal_self_attention():
-  batch_size     = 32
+  batch_size     = 8
   num_sequences  = 2
   dropout        = 0.1
   embed_dims     = 256
@@ -63,9 +73,9 @@ def test_temporal_self_attention():
   print("tsa ",res.shape)
 
 def test_bev_former_layer():
-  batch_size   = 32
+  batch_size   = 8
 
-  spat_num_cams       = 6
+  spat_num_cams       = 2
   spat_num_zAnchors   = 4
   spat_dropout        = 0.1
   spat_embed_dims     = 256
@@ -105,7 +115,7 @@ def test_bev_former_layer():
   print("bev ",res.shape)
 
 
-test_vov()
+test_backbone()
 test_spatial_cross_attention()
 test_temporal_self_attention()
 test_bev_former_layer()

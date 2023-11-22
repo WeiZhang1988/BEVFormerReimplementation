@@ -7,7 +7,63 @@ from attentions import *
 
 
 class Encoder(nn.Module):
-  pass
+  def __init__(self,query_H,query_W,query_C,\
+                    spat_num_cams=6,spat_num_zAnchors=4,spat_dropout=0.1,spat_embed_dims=256,spat_num_heads=8,spat_num_levels=4,spat_num_points=2,\
+                    temp_num_sequences=2,temp_dropout=0.1,temp_embed_dims=256,temp_num_heads=8,temp_num_levels=4,temp_num_points=4,device=torch.device("cpu")):
+    super().__init__()
+    assert query_C == temp_embed_dims, "query_C and temp_embed_dims must be the same to simplify structure"
+    self.query_H              = query_H
+    self.query_W              = query_W
+    self.query_C              = query_C
+    self.num_query            = query_H * query_W
+    self.spat_num_cams        = spat_num_cams
+    self.spat_num_zAnchors    = spat_num_zAnchors
+    self.spat_dropout         = spat_dropout
+    self.spat_embed_dims      = spat_embed_dims
+    self.spat_num_heads       = spat_num_heads
+    self.spat_num_levels      = spat_num_levels
+    self.spat_num_points      = spat_num_points
+    self.temp_num_sequences   = temp_num_sequences
+    self.temp_dropout         = temp_dropout
+    self.temp_embed_dims      = temp_embed_dims
+    self.temp_num_heads       = temp_num_heads
+    self.temp_num_levels      = temp_num_levels
+    self.temp_num_points      = temp_num_points
+    self.device               = device
+    embed_dims                = spat_embed_dims
+    self.embed_dims           = embed_dims
+    # self.NNP_query_origin [1(extends to bs), num_query, embed_dims]
+    self.NNP_query_origin  = nn.Parameter(torch.ones(1,query_H*query_W,query_C,device=device)*0.98)
+    # self.NNP_query_pos [1(extends to bs), num_query, embed_dims]
+    self.NNP_query_pos     = nn.Parameter(torch.ones(1,query_H*query_W,temp_embed_dims,device=device)*0.95)
+    # self.NNP_bev_pos [1(extends to bs), num_query, embed_dims]
+    self.NNP_bev_pos       = nn.Parameter(torch.ones(1,query_H*query_W,temp_embed_dims,device=device)*0.95)
+    # self.query [1(extends to bs), num_query, embed_dims]
+    self.temp_query        = self.NNP_query_origin + self.NNP_query_pos
+    self.NN_bevFormerLayer = BEVFormerLayer(spat_num_cams,spat_num_zAnchors,spat_dropout,spat_embed_dims,spat_num_heads,spat_num_levels,spat_num_points,\
+                                            temp_num_sequences,temp_dropout,temp_embed_dims,temp_num_heads,temp_num_levels,temp_num_points,device)
+    self.temp_key_hist     = [self.query for _ in range(temp_num_sequences)]
+    self.temp_value_hist   = [self.query for _ in range(temp_num_sequences)]
+  def forward(self,embed_features,spat_spatial_shapes,spat_reference_points):
+    """
+    Args:
+      embed_features (Tensor [num_cams, bs, num_value(==num_key), embed_dims]): 
+    """
+    bev = self.NN_bevFormerLayer(embed_features,embed_features, self.temp_query,self.temp_key_hist,self.temp_value_hist,spat_spatial_shapes=spat_spatial_shapes,spat_reference_points=spat_reference_points,spat_reference_points_cam=spat_reference_points_cam,spat_bev_mask=spat_bev_mask,temp_spatial_shapes=temp_spatial_shapes,temp_reference_points=temp_reference_points)
+  def cal_reference_points(self,depth,bs):
+    zs = torch.linspace(0.5, depth - 0.5, self.spat_num_zAnchors, device=self.device).view(self.spat_num_zAnchors, 1, 1).expand(self.spat_num_zAnchors, self.query_H, self.query_W) / self.spat_num_zAnchors
+    xs = torch.linspace(0.5, self.query_W- 0.5, self.query_W, device=self.device).view(1, 1, self.query_W).expand(self.spat_num_zAnchors, self.query_H, self.query_W) / self.query_W
+    ys = torch.linspace(0.5, self.query_H - 0.5, self.query_H, device=self.device).view(1, self.query_H, 1).expand(self.spat_num_zAnchors, self.query_H, self.query_W) / self.query_H
+    # ref_3d [num_zAnchors, query_H, query_W]
+    # -----> [num_zAnchors, query_H, query_W, 3]
+    # -----> [num_zAnchors, 3, query_H, query_W]
+    # -----> [num_zAnchors, 3, query_H * query_W]
+    # -----> [num_zAnchors, query_H * query_W, 3]
+    # -----> [bs, num_zAnchors, query_H * query_W, 3]
+    ref_3d = torch.stack((xs, ys, zs), -1)
+    ref_3d = ref_3d.permute(0, 3, 1, 2).flatten(2).permute(0, 2, 1)
+    ref_3d = ref_3d[None].repeat(bs, 1, 1, 1)#stop here
+
 
 class BEVFormerLayer(nn.Module):
   """
