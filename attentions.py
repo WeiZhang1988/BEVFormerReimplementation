@@ -37,11 +37,11 @@ class SpatialCrossAttention(nn.Module):
     self.xy            = 2
     assert self.embed_dims % self.num_heads == 0, "embedding dimension must be divisible by number of heads"
     self.head_dims     = self.embed_dims // self.num_heads
-    self.NN_to_Q             = nn.Linear(self.embed_dims,self.embed_dims).to(device)
-    self.NN_to_K             = nn.Linear(self.embed_dims,self.embed_dims).to(device)
-    self.NN_to_V             = nn.Linear(self.embed_dims,self.embed_dims).to(device)
-    self.NN_sampling_offsets = nn.Linear(self.embed_dims, self.num_heads * self.num_levels * self.num_points * self.num_zAnchors * 2).to(device)
-    self.NN_output           = nn.Linear(self.embed_dims, self.embed_dims).to(device)
+    self.NN_to_Q             = nn.Linear(self.head_dims,self.head_dims).to(device)
+    self.NN_to_K             = nn.Linear(self.head_dims,self.head_dims).to(device)
+    self.NN_to_V             = nn.Linear(self.head_dims,self.head_dims).to(device)
+    self.NN_sampling_offsets = nn.Linear(self.head_dims,self.num_levels * self.num_points * self.num_zAnchors * 2).to(device)
+    self.NN_output           = nn.Linear(self.embed_dims,self.embed_dims).to(device)
     self.NN_dropout          = nn.Dropout(dropout).to(device)
   def forward(self,query,key,value,reference_points=None,spatial_shapes=None,reference_points_cam=None,bev_mask=None):
     """
@@ -90,106 +90,110 @@ class SpatialCrossAttention(nn.Module):
         query_rebatch[j, i, :len(index_query_per_img)] = query[j, index_query_per_img]
         reference_points_rebatch[j, i, :len(index_query_per_img)] = reference_points_per_img[j, index_query_per_img]
     # query_rebatch [bs, num_cams,  max_len, embed_dims]
-    # --------------> [bs * num_cams, max_len, embed_dims]
+    # ------------> [bs * num_cams, max_len, embed_dims]
     query_rebatch = query_rebatch.view(bs*self.num_cams, max_len, self.embed_dims)
-    # reference_points_rebatch [bs, num_cams,  max_len, num_levels, 2]
-    # -----------------------> [bs * num_cams, max_len, num_levels, 2]
-    reference_points_rebatch = reference_points_rebatch.view(bs*self.num_cams, max_len, num_levels, 2)
-    # key [num_cams, bs,  num_key, embed_dims]
-    # --> [bs * num_cams, num_key, embed_dims]
-    key = key.reshape(bs*self.num_cams,num_key,self.embed_dims).contiguous()
-    # value [num_cams, bs,  num_key, embed_dims]
-    # ----> [bs * num_cams, num_key, embed_dims]
-    value = value.reshape(bs*self.num_cams,num_value,self.embed_dims).contiguous()
+    # reference_points_rebatch [bs, num_cams,  max_len, num_zAnchors, 2]
+    # -----------------------> [bs * num_cams, max_len, num_zAnchors, 2]
+    reference_points_rebatch = reference_points_rebatch.view(bs*self.num_cams, max_len, self.num_zAnchors, 2)
+    # key, value [num_cams, bs,  num_key(or num_value), embed_dims]
+    # ---------> [bs * num_cams, num_key(or num_value), embed_dims]
+    key   = key.view(bs*self.num_cams,num_key,self.embed_dims)
+    value = value.view(bs*self.num_cams,num_value,self.embed_dims)
     #####################################################################################################################################################################
     # start of multi-scale deformable attention computation #############################################################################################################
     #####################################################################################################################################################################
     bc, nq, _ = query_rebatch.shape
     bc, nk, _ = key.shape
     bc, nv, _ = value.shape
-    # sampling_offsets [bs * num_cams, nq, num_heads, num_levels, num_points * num_zAnchors, 2]
-    sampling_offsets = self.NN_sampling_offsets(query_rebatch).view(bc, nq, self.num_heads, self.num_levels, self.num_points * self.num_zAnchors, self.xy)
-    assert nk == self.num_levels * self.num_points * self.num_zAnchors,   "total key number does not match numbers of levels, points and z anchors"
-    assert nv == self.num_levels * self.num_points * self.num_zAnchors,   "total value number does not match numbers of levels, points and z anchors"
-    assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == nv
-    q = self.NN_to_Q(query_rebatch) 
-    k = self.NN_to_K(key)    
-    v = self.NN_to_V(value) 
-    # q  [bs * num_cams, nq, embed_dims]
-    # -> [bs * num_cams, nq, num_heads, head_dims]
-    q = rearrange(q, 'b q (h d) -> b q h d', h=self.num_heads) 
-    # k  [bs * num_cams, nk, embed_dims]
-    # -> [bs * num_cams, nk, num_heads, head_dims]
-    k = rearrange(k, 'b k (h d) -> b k h d', h=self.num_heads)
-    # v  [bs * num_cams, nv, embed_dims]
-    # -> [bs * num_cams, nv, num_heads, head_dims]
-    v = rearrange(v, 'b v (h d) -> b v h d', h=self.num_heads)
-    # attention_weights [bs * num_cams, nq, num_heads, num_levels * num_points * num_zAnchors]
-    # ----------------> [bs * num_cams, nq, num_heads, num_levels,  num_points * num_zAnchors]
-    attention_weights = einsum(q, k, 'b q h d, b k h d -> b q h k')
-    attention_weights = attention_weights.softmax(-1)
-    attention_weights = rearrange(attention_weights, 'b q h (l pz) -> b q h l pz', l=self.num_levels, pz=self.num_points * self.num_zAnchors)
-    assert reference_points_rebatch.shape[1]  == nq, "second dim of reference_points must equal to nq"
-    assert reference_points_rebatch.shape[-1] == 2,  "last dim of reference_points must be 2"
-    """
-    For each BEV query, it owns `num_Z_anchors` in 3D space that having different heights.
-    After proejcting, each BEV query has `num_Z_anchors` reference points in each 2D image.
-    For each referent point, we sample `num_points` sampling points.
-    For `num_Z_anchors` reference points,  it has overall `num_points * num_Z_anchors` sampling points.
-    """
+    # query_rebatch, key, value  [bs * num_cams, nq(or nk or nv), embed_dims]
+    # ------------------------>  [bs * num_cams, nq(or nk or nv), num_heads, head_dims]
+    query_rebatch = rearrange(query_rebatch, 'b q (h d) -> b q h d', h=self.num_heads) 
+    key           = rearrange(key, 'b k (h d) -> b k h d', h=self.num_heads)
+    value         = rearrange(value, 'b v (h d) -> b v h d', h=self.num_heads)
     # offset_normalizer [num_levels, 2]
     offset_normalizer = torch.stack([spatial_shapes[..., 1], spatial_shapes[..., 0]], -1)
     # reference_points_rebatch [bs * num_cams, nq, 1(to extend to num_heads), 1(to extend to num_levels), 1(to extend to num_points), num_zAnchor, 2]
     reference_points_rebatch = reference_points_rebatch[:, :, None, None, None, :, :]
-    # sampling_offsets [bs * num_cams, nq, num_heads, num_levels, num_points * num_zAnchors, 2]
-    # ---------------> [bs * num_cams, nq, num_heads, num_levels, num_points,  num_zAnchors, 2]
+    # query_rebatch      [bs * num_cams, nq(or nk or nv), num_heads, head_dims]
+    # ->sampling_offsets [bs * num_cams, nq, num_heads, num_levels * num_points * num_zAnchors * 2]
+    # -----------------> [bs * num_cams, nq, num_heads, num_levels,  num_points * num_zAnchors,  2]
+    # -----------------> [bs * num_cams, nq, num_heads, num_levels,  num_points,  num_zAnchors,  2]
+    sampling_offsets = self.NN_sampling_offsets(query_rebatch).view(bc, nq, self.num_heads, self.num_levels, self.num_points * self.num_zAnchors, self.xy)
     sampling_offsets = sampling_offsets / offset_normalizer[None, None, None, :, None, :]
     sampling_offsets = sampling_offsets.view(bs * num_cams, nq, self.num_heads, self.num_levels, self.num_points, self.num_zAnchors, self.xy)
     # sampling_locations [bs * num_cams, nq, num_heads, num_levels, num_points,  num_zAnchors, 2]
     # -----------------> [bs * num_cams, nq, num_heads, num_levels, num_points * num_zAnchors, 2]
     sampling_locations = reference_points_rebatch + sampling_offsets
     sampling_locations = sampling_locations.view(bs * num_cams, nq, self.num_heads, self.num_levels, self.num_points * self.num_zAnchors, self.xy)
+    tmp        = [int(H_.item()) * int(W_.item()) for H_, W_ in spatial_shapes]
+    key_list   = key.split(tmp, dim=1)
+    value_list = value.split(tmp, dim=1)
+    # sampling_grids [bs * num_cams, nq, num_heads, num_levels, num_points * num_zAnchors, 2]
+    sampling_grids = 2 * sampling_locations - 1
+    sampling_key_list   = []
+    sampling_value_list = []
+    for level, (H_, W_) in enumerate(spatial_shapes):
+      # key_l_ and value_l_ [bs * num_cams,             H_ * W_,                num_heads,              head_dims] 
+      # ------------------> [bs * num_cams,             H_ * W_,                num_heads * head_dims]
+      # ------------------> [bs * num_cams,             num_heads * head_dims,  H_ * W_]
+      # ------------------> [bs * num_cams * num_heads, head_dims,              H_,                     W_]
+      key_l_   =   key_list[level].flatten(2).transpose(1, 2).reshape(bs * self.num_cams * self.num_heads, self.head_dims, int(H_.item()), int(W_.item()))
+      value_l_ = value_list[level].flatten(2).transpose(1, 2).reshape(bs * self.num_cams * self.num_heads, self.head_dims, int(H_.item()), int(W_.item()))
+      # sampling_grid_key_l_  [bs * num_cams,              1,         num_heads,                   num_points * num_zAnchors, 2]
+      # ------------------->  [bs * num_cams,              num_heads,  1,                          num_points * num_zAnchors, 2]
+      # ------------------->  [bs * num_cams * num_heads,  1,         num_points * num_zAnchors,   2]
+      sampling_grid_key_l_   = sampling_grids[:, :1, :,level].transpose(1, 2).flatten(0, 1).contiguous()
+      # sampling_key_l_   [bs * num_cams * num_heads,  head_dims,  1,  num_points * num_zAnchors]
+      sampling_key_l_ = F.grid_sample(key_l_,sampling_grid_key_l_,mode='bilinear',padding_mode='zeros',align_corners=False)
+      sampling_key_list.append(sampling_key_l_)
+      # sampling_grid_value_l_  [bs * num_cams,              nq,         num_heads,                   num_points * num_zAnchors, 2]
+      # --------------------->  [bs * num_cams,              num_heads,  nq,                          num_points * num_zAnchors, 2]
+      # --------------------->  [bs * num_cams * num_heads,  nq,         num_points * num_zAnchors,   2]
+      sampling_grid_value_l_ = sampling_grids[:, :, :,level].transpose(1, 2).flatten(0, 1).contiguous()
+      # sampling_value_l_ [bs * num_cams * num_heads,  head_dims,  nq,  num_points * num_zAnchors]
+      sampling_value_l_ = F.grid_sample(value_l_,sampling_grid_value_l_,mode='bilinear',padding_mode='zeros',align_corners=False)
+      sampling_value_list.append(sampling_value_l_)
+    # sampling_key_list  [[bs * num_cams * num_heads, head_dims, 1, num_points * num_zAnchors]....]
+    # ---------------->   [bs * num_cams * num_heads, head_dims, 1, num_levels(get the dimension by stack in dim -2), num_points * num_zAnchors]
+    # ---------------->   [bs * num_cams * num_heads, head_dims, 1 * num_levels * num_points * num_zAnchors(by flatten)]
+    # ---------------->   [bs * num_cams,  num_heads, head_dims, 1 * num_levels * num_points * num_zAnchors]
+    # ---------------->   [bs * num_cams,  1 * num_levels * num_points * num_zAnchors, num_heads, head_dims]
+    key_sampled   = torch.stack(sampling_key_list, dim=-2).flatten(-3).view(bc, self.num_heads, self.head_dims, 1 * self.num_levels * self.num_points * self.num_zAnchors).permute(0,3,1,2).contiguous()
+    # sampling_value_list  [[bs * num_cams * num_heads, head_dims, nq, num_points * num_zAnchors]....]
+    # ------------------>   [bs * num_cams * num_heads, head_dims, nq, num_levels(get the dimension by stack in dim -2), num_points * num_zAnchors]
+    # ------------------>   [bs * num_cams * num_heads, head_dims, nq, num_levels * num_points * num_zAnchors(by flatten)]
+    value_sampled = torch.stack(sampling_value_list, dim=-2).flatten(-2)
+    assert key_sampled.shape[1]   == 1 * self.num_levels * self.num_points * self.num_zAnchors,   "number of sampled key corresponding to one query   must match numbers of levels * points * zAnchors"
+    assert value_sampled.shape[-1] == self.num_levels * self.num_points * self.num_zAnchors,      "number of sampled value corresponding to one query must match numbers of levels * points * zAnchors"
+    assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == nv
+    # q, k [bs * num_cams, nq(or num_levels * num_points * num_zAnchors), num_heads, head_dims]
+    q = self.NN_to_Q(query_rebatch) 
+    k = self.NN_to_K(key_sampled)    
+    # v  [bs * num_cams * num_heads, head_dims, nq, num_levels * num_points * num_zAnchors]
+    # -> [bs * num_cams * num_heads, nq, num_levels * num_points * num_zAnchors, head_dims]
+    # -> [bs * num_cams * num_heads, head_dims, nq, num_levels * num_points * num_zAnchors]
+    v = self.NN_to_V(value_sampled.permute(0,2,3,1)).permute(0,3,1,2).contiguous()
+    # attention_weights [bs * num_cams, nq, num_heads, num_levels * num_points * num_zAnchors]
+    # ----------------> [bs * num_cams, nq, num_heads, num_levels,  num_points * num_zAnchors]
+    # ----------------> [bs * num_cams, num_heads,     nq,          num_levels,  num_points * num_zAnchors]
+    # ----------------> [bs * num_cams * num_heads,    1(to extend to head_dims), nq, num_levels * num_points * num_zAnchors]
+    attention_weights = einsum(q, k, 'b q h d, b k h d -> b q h k')
+    attention_weights = attention_weights.softmax(-1)
+    attention_weights = rearrange(attention_weights, 'b q h (l pz) -> b q h l pz', l=self.num_levels, pz=self.num_points * self.num_zAnchors)
+    attention_weights = attention_weights.transpose(1, 2).reshape(bc * self.num_heads, 1, nq, self.num_levels * self.num_points * self.num_zAnchors)
+    assert reference_points_rebatch.shape[1]  == nq, "second dim of reference_points must equal to nq"
+    assert reference_points_rebatch.shape[-1] == 2,  "last dim of reference_points must be 2"    
     """
     multi_scale_deformable_attn_pytorch(value, spatial_shapes, sampling_locations, attention_weights)
     """
-    assert tuple(v.shape) == (bc, nv, self.num_heads, self.head_dims)
+    assert tuple(v.shape) == (bc * self.num_heads, self.head_dims, nq, self.num_levels * self.num_points * self.num_zAnchors)
     assert tuple(spatial_shapes.shape) == (self.num_levels, self.xy)
     assert tuple(sampling_locations.shape) == (bc, nq, self.num_heads, self.num_levels, self.num_points * self.num_zAnchors, self.xy)
-    assert tuple(attention_weights.shape) ==  (bc, nq, self.num_heads, self.num_levels, self.num_points * self.num_zAnchors)
-    tmp = [int(H_.item()) * int(W_.item()) for H_, W_ in spatial_shapes]
-    value_list = v.split(tmp, dim=1)
-    # sampling_grids [bs * num_cams, nq, num_heads, num_levels, num_points * num_zAnchors, 2]
-    sampling_grids = 2 * sampling_locations - 1
-    sampling_value_list = []
-    for level, (H_, W_) in enumerate(spatial_shapes):
-      # value_l_ [bs * num_cams,             H_ * W_,                num_heads,              head_dims] 
-      # -------> [bs * num_cams,             H_ * W_,                num_heads * head_dims]
-      # -------> [bs * num_cams,             num_heads * head_dims, H_ * W_]
-      # -------> [bs * num_cams * num_heads, head_dims,             H_,                     W_]
-      value_l_ = value_list[level].flatten(2).transpose(1, 2).reshape(bs * self.num_cams * self.num_heads, self.head_dims, int(H_.item()), int(W_.item()))
-      # sampling_grid_l_  [bs * num_cams,              nq,         num_heads,                   num_points * num_zAnchors, 2]
-      # --------------->  [bs * num_cams,              num_heads,  nq,                          num_points * num_zAnchors, 2]
-      # --------------->  [bs * num_cams * num_heads,  nq,         num_points * num_zAnchors,   2]
-      sampling_grid_l_ = sampling_grids[:, :, :,level].transpose(1, 2).flatten(0, 1)
-      # sampling_value_l_ [bs * num_cams * num_heads,  head_dims,  nq,  num_points * num_zAnchors]
-      sampling_value_l_ = F.grid_sample(
-        value_l_,
-        sampling_grid_l_,
-        mode='bilinear',
-        padding_mode='zeros',
-        align_corners=False)
-      sampling_value_list.append(sampling_value_l_)
-    # attention_weights [bs * num_cams,              nq,                        num_heads,   num_levels,  num_points * num_zAnchors]
-    # ----------------> [bs * num_cams,              num_heads,                 nq,          num_levels,  num_points * num_zAnchors]
-    # ----------------> [bs * num_cams * num_heads,  1(to extend to head_dims), num_queries, num_levels * num_points * num_zAnchors]
-    attention_weights = attention_weights.transpose(1, 2).reshape(bc * self.num_heads, 1, num_query, self.num_levels * self.num_points * self.num_zAnchors)
-    # sampling_value_list [[bs * num_cams * num_heads, head_dims, nq, num_points * num_zAnchors]....]
-    # ------------------>  [bs * num_cams * num_heads, head_dims, nq, num_levels(get the dimension by stack in dim -2), num_points * num_zAnchors]
-    # ------------------>  [bs * num_cams * num_heads, head_dims, nq, num_levels * num_points * num_zAnchors(by flatten)]
-    # ------------------>  [bs * num_cams * num_heads, head_dims, nq, 1(by sum after elementwise multiplication)]
-    # ------------------>  [bs * num_cams, num_heads * head_dims(==embed_dims), nq]
-    # ------------------>  [bs * num_cams, nq, embed_dims]
-    attention = (torch.stack(sampling_value_list, dim=-2).flatten(-2) * attention_weights).sum(-1).view(bc, self.num_heads * self.head_dims, nq).transpose(1, 2).contiguous()
+    assert tuple(attention_weights.shape)  == (bc * self.num_heads, 1, nq, self.num_levels * self.num_points * self.num_zAnchors)
+    # attention [bs * num_cams * num_heads, head_dims, nq, 1(by sum after elementwise multiplication)]
+    # --------> [bs * num_cams, num_heads * head_dims(==embed_dims), nq]
+    # --------> [bs * num_cams, nq, embed_dims]
+    attention = (v * attention_weights).sum(-1).view(bc, self.num_heads * self.head_dims, nq).transpose(1, 2).contiguous()
     #####################################################################################################################################################################
     # end of multi-scale deformable attention computation ###############################################################################################################
     #####################################################################################################################################################################
@@ -248,11 +252,11 @@ class TemporalSelfAttention(nn.Module):
     self.xy            = 2
     assert self.embed_dims % self.num_heads == 0, "embedding dimension must be divisible by number of heads"
     self.head_dims      = self.embed_dims // self.num_heads
-    self.NN_to_Q             = nn.Linear(self.embed_dims,self.embed_dims).to(device)
-    self.NN_to_K             = nn.Linear(self.embed_dims,self.embed_dims).to(device)
-    self.NN_to_V             = nn.Linear(self.embed_dims,self.embed_dims).to(device)
-    self.NN_sampling_offsets = nn.Linear(self.embed_dims, self.num_heads * self.num_levels * self.num_points * 2).to(device)
-    self.NN_output           = nn.Linear(self.embed_dims, self.embed_dims).to(device)
+    self.NN_to_Q             = nn.Linear(self.head_dims,self.head_dims).to(device)
+    self.NN_to_K             = nn.Linear(self.head_dims,self.head_dims).to(device)
+    self.NN_to_V             = nn.Linear(self.head_dims,self.head_dims).to(device)
+    self.NN_sampling_offsets = nn.Linear(self.head_dims,self.num_levels * self.num_points * 2).to(device)
+    self.NN_output           = nn.Linear(self.embed_dims,self.embed_dims).to(device)
     self.NN_dropout          = nn.Dropout(dropout).to(device)
     assert self.num_sequences>0, "value length must be larger than zero"
   def forward(self,query,key_hist=[],value_hist=[],reference_points=None,spatial_shapes=None):
@@ -295,76 +299,87 @@ class TemporalSelfAttention(nn.Module):
     #####################################################################################################################################################################
     # start of attention computation ####################################################################################################################################
     #####################################################################################################################################################################
-    # sampling_offsets [bs * num_sequences, num_query, num_heads, num_levels, num_points, 2]
-    sampling_offsets = self.NN_sampling_offsets(queries).view(bs * self.num_sequences, num_query, self.num_heads, self.num_levels, self.num_points, self.xy)
-    assert num_key   == self.num_levels * self.num_points,   "total key number does not match numbers of levels and points"
-    assert num_value == self.num_levels * self.num_points,   "total value number does not match numbers of levels and points"
-    #assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
-    q = self.NN_to_Q(queries) 
-    k = self.NN_to_K(keies)    
-    v = self.NN_to_V(values)  
-    # q  [bs * num_cams, nq, embed_dims]
-    # -> [bs * num_cams, nq, num_heads, head_dims]
-    q = rearrange(q, 'b q (h d) -> b q h d', h=self.num_heads) 
-    # k  [bs * num_cams, nk, embed_dims]
-    # -> [bs * num_cams, nk, num_heads, head_dims]
-    k = rearrange(k, 'b k (h d) -> b k h d', h=self.num_heads)
-    # v  [bs * num_cams, nv, embed_dims]
-    # -> [bs * num_cams, nv, num_heads, head_dims]
-    v = rearrange(v, 'b v (h d) -> b v h d', h=self.num_heads)
-    # attention_weights [bs * num_sequences, num_query, num_heads, num_levels * num_points]
-    # ----------------> [bs * num_sequences, num_query, num_heads, num_levels,  num_points]
-    attention_weights = einsum(q, k, 'b q h d, b k h d -> b q h k')
-    attention_weights = attention_weights.softmax(-1)
-    attention_weights = rearrange(attention_weights, 'b q h (l p) -> b q h l p', l=self.num_levels)
-    assert reference_points.shape[1]  == num_query, "second dim of reference_points must equal to num_query"
-    assert reference_points.shape[-1] == 2,         "last dim of reference_points must be 2"
+    # queries, keies, values  [bs * num_sequences, num_query(or num_key or num_value), embed_dims]
+    # --------------------->  [bs * num_sequences, num_query(or num_key or num_value), num_heads, head_dims]
+    queries = rearrange(queries, 'b q (h d) -> b q h d', h=self.num_heads) 
+    keies   = rearrange(keies, 'b k (h d) -> b k h d', h=self.num_heads)
+    values  = rearrange(values, 'b v (h d) -> b v h d', h=self.num_heads)
     # offset_normalizer [num_levels, 2]
     offset_normalizer = torch.stack([spatial_shapes[..., 1], spatial_shapes[..., 0]], -1)
+    # sampling_offsets [bs * num_sequences, num_query, num_heads, num_levels, num_points, 2]
+    sampling_offsets = self.NN_sampling_offsets(queries).view(bs * self.num_sequences, num_query, self.num_heads, self.num_levels, self.num_points, self.xy)
+    assert reference_points.shape[1]  == num_query, "second dim of reference_points must equal to num_query"
+    assert reference_points.shape[-1] == 2,         "last dim of reference_points must be 2"
     # reference_points  extends to [bs * num_sequences, num_query, 1(to extend to num_heads), num_levels, 1(to extend to num_points), 2]
     # offset_normalizer extends to [bs * num_sequences, num_query, num_heads, num_levels, num_points, 2]
     sampling_locations = reference_points[:, :, None, :, None, :] + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
+    tmp        = [int(H_.item()) * int(W_.item()) for H_, W_ in spatial_shapes]
+    key_list   = keies.split(tmp, dim=1)
+    value_list = values.split(tmp, dim=1)
+    # sampling_grids [bs * num_sequences, num_query, num_heads, num_levels, num_points, 2]
+    sampling_grids = 2 * sampling_locations - 1
+    sampling_key_list   = []
+    sampling_value_list = []
+    for level, (H_, W_) in enumerate(spatial_shapes):
+      # key_l_ and value_l_ [bs * num_sequences,             H_ * W_,                num_heads,              head_dims] 
+      # ------------------> [bs * num_sequences,             H_ * W_,                num_heads * head_dims]
+      # ------------------> [bs * num_sequences,             num_heads * head_dims,  H_ * W_]
+      # ------------------> [bs * num_sequences * num_heads, head_dims,              H_,                     W_]
+      key_l_   =   key_list[level].flatten(2).transpose(1, 2).reshape(bs * self.num_sequences * self.num_heads, self.head_dims, int(H_.item()), int(W_.item()))
+      value_l_ = value_list[level].flatten(2).transpose(1, 2).reshape(bs * self.num_sequences * self.num_heads, self.head_dims, int(H_.item()), int(W_.item()))
+      # sampling_grid_key_l_  [bs * num_sequences,              1,         num_heads,                   num_points, 2]
+      # ------------------->  [bs * num_sequences,              num_heads,  1,                          num_points, 2]
+      # ------------------->  [bs * num_sequences * num_heads,  1,         num_points,   2]
+      sampling_grid_key_l_   = sampling_grids[:, :1, :,level].transpose(1, 2).flatten(0, 1).contiguous()
+      # sampling_key_l_   [bs * num_sequences * num_heads,  head_dims,  1,  num_points]
+      sampling_key_l_ = F.grid_sample(key_l_,sampling_grid_key_l_,mode='bilinear',padding_mode='zeros',align_corners=False)
+      sampling_key_list.append(sampling_key_l_)
+      # sampling_grid_value_l_  [bs * num_sequences,              n_query,         num_heads,                   num_points, 2]
+      # --------------------->  [bs * num_sequences,              num_heads,       n_query,                     num_points, 2]
+      # --------------------->  [bs * num_sequences * num_heads,  n_query,         num_points ,   2]
+      sampling_grid_value_l_ = sampling_grids[:, :, :,level].transpose(1, 2).flatten(0, 1).contiguous()
+      # sampling_value_l_ [bs * num_sequences * num_heads,  head_dims,  n_query,  num_points ]
+      sampling_value_l_ = F.grid_sample(value_l_,sampling_grid_value_l_,mode='bilinear',padding_mode='zeros',align_corners=False)
+      sampling_value_list.append(sampling_value_l_)
+    # sampling_key_list  [[bs * num_sequences * num_heads, head_dims, 1, num_points ]....]
+    # ---------------->   [bs * num_sequences * num_heads, head_dims, 1, num_levels(get the dimension by stack in dim -2), num_points]
+    # ---------------->   [bs * num_sequences * num_heads, head_dims, 1 * num_levels * num_points (by flatten)]
+    # ---------------->   [bs * num_sequences,  num_heads, head_dims, 1 * num_levels * num_points]
+    # ---------------->   [bs * num_sequences,  1 * num_levels * num_points, num_heads, head_dims]
+    key_sampled   = torch.stack(sampling_key_list, dim=-2).flatten(-3).view(bs * self.num_sequences, self.num_heads, self.head_dims, 1 * self.num_levels * self.num_points).permute(0,3,1,2).contiguous()
+    # sampling_value_list  [[bs * num_sequences * num_heads, head_dims, n_query, num_points]....]
+    # ------------------>   [bs * num_sequences * num_heads, head_dims, n_query, num_levels(get the dimension by stack in dim -2), num_points]
+    # ------------------>   [bs * num_sequences * num_heads, head_dims, n_query, num_levels * num_points(by flatten)]
+    value_sampled = torch.stack(sampling_value_list, dim=-2).flatten(-2)
+    assert key_sampled.shape[1]    == 1 * self.num_levels * self.num_points,  "number of sampled key corresponding to one query   must match numbers of levels * points * zAnchors"
+    assert value_sampled.shape[-1] == self.num_levels * self.num_points,      "number of sampled value corresponding to one query must match numbers of levels * points * zAnchors"
+    assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
+    # q, k [bs * num_sequences, num_query(or num_levels * num_points), num_heads, head_dims]
+    q = self.NN_to_Q(queries) 
+    k = self.NN_to_K(key_sampled)    
+    # v  [bs * num_sequences * num_heads, head_dims, num_query, num_levels * num_points]
+    # -> [bs * num_sequences * num_heads, num_query, num_levels * num_points, head_dims]
+    # -> [bs * num_sequences * num_heads, head_dims, num_query, num_levels * num_points * num_zAnchors]
+    v = self.NN_to_V(value_sampled.permute(0,2,3,1)).permute(0,3,1,2).contiguous()
+    # attention_weights [bs * num_sequences, num_query, num_heads, num_levels * num_points]
+    # ----------------> [bs * num_sequences, num_query, num_heads, num_levels,  num_points]
+     # ---------------->[bs * num_sequences, num_heads,     num_query,          num_levels,  num_points]
+    # ----------------> [bs * num_sequences * num_heads,    1(to extend to head_dims), num_query, num_levels * num_points]
+    attention_weights = einsum(q, k, 'b q h d, b k h d -> b q h k')
+    attention_weights = attention_weights.softmax(-1)
+    attention_weights = rearrange(attention_weights, 'b q h (l p) -> b q h l p', l=self.num_levels)
+    attention_weights = attention_weights.transpose(1, 2).reshape(bs * self.num_sequences * self.num_heads, 1, num_query, self.num_levels * self.num_points)
     """
     multi_scale_deformable_attn_pytorch(value, spatial_shapes, sampling_locations, attention_weights)
     """
-    assert tuple(v.shape)                  == (bs * self.num_sequences, num_value, self.num_heads, self.head_dims)
+    assert tuple(v.shape)                  == (bs * self.num_sequences * self.num_heads, self.head_dims, num_query, self.num_levels * self.num_points)
     assert tuple(spatial_shapes.shape)     == (self.num_levels, self.xy)
     assert tuple(sampling_locations.shape) == (bs * self.num_sequences, num_query, self.num_heads, self.num_levels, self.num_points, self.xy)
-    assert tuple(attention_weights.shape)  == (bs * self.num_sequences, num_query, self.num_heads, self.num_levels, self.num_points)
-    tmp = [int(H_.item()) * int(W_.item()) for H_, W_ in spatial_shapes]
-    value_list = v.split(tmp, dim=1)
-    # sampling_grids [bs * num_sequences, num_query, num_heads, num_levels, num_points, 2]
-    sampling_grids = 2 * sampling_locations - 1
-    sampling_value_list = []
-    for level, (H_, W_) in enumerate(spatial_shapes):
-      # value_l_ [bs * num_sequences,             H_ * W_,                num_heads,              head_dims] 
-      # -------> [bs * num_sequences,             H_ * W_,                num_heads * head_dims]
-      # -------> [bs * num_sequences,             num_heads * head_dims,  H_ * W_]
-      # -------> [bs * num_sequences * num_heads, head_dims,              H_,                     W_]
-      value_l_ = value_list[level].flatten(2).transpose(1, 2).reshape(bs * self.num_sequences * self.num_heads, self.head_dims, int(H_.item()), int(W_.item()))
-      # sampling_grid_l_ [bs * num_sequences,              num_query, num_heads,                   num_points, 2]
-      # ---------------> [bs * num_sequences,              num_heads,                   num_query, num_points, 2]
-      # ---------------> [bs * num_sequences * num_heads,  num_query, num_points,                  2]
-      sampling_grid_l_ = sampling_grids[:, :, :,level].transpose(1, 2).flatten(0, 1)
-      # sampling_value_l_ [bs * num_sequences * num_heads, head_dims, num_queries, num_points]
-      sampling_value_l_ = F.grid_sample(
-        value_l_,
-        sampling_grid_l_,
-        mode='bilinear',
-        padding_mode='zeros',
-        align_corners=False)
-      sampling_value_list.append(sampling_value_l_)
-    # attention_weights [bs * num_sequences, num_query,   num_heads,   num_levels,   num_points]
-    # ----------------> [bs * num_sequences, num_heads,   num_query,   num_levels,   num_points]
-    # ----------------> [bs * num_sequences * num_heads,  1(to extend to head_dims), num_query, num_levels * num_points]
-    attention_weights = attention_weights.transpose(1, 2).reshape(bs * self.num_sequences * self.num_heads, 1, num_query, self.num_levels * self.num_points)
-    # sampling_value_list [[bs * num_sequences * num_heads, head_dims, num_query, num_points]....]
-    # ------------------>  [bs * num_sequences * num_heads, head_dims, num_query, num_levels(get the dimension by stack in dim -2), num_points]
-    # ------------------>  [bs * num_sequences * num_heads, head_dims, num_query, num_levels * num_points(by flatten)]
-    # ------------------>  [bs * num_sequences * num_heads, head_dims, num_query, 1(by sum after elementwise multiplication)]
-    # ------------------>  [bs * num_sequences, num_heads * head_dims(==embed_dims), num_query]
-    # ------------------>  [bs * num_sequences, num_query, embed_dims]
-    attention = (torch.stack(sampling_value_list, dim=-2).flatten(-2) * attention_weights).sum(-1).view(bs * self.num_sequences, self.num_heads * self.head_dims, num_query).transpose(1, 2).contiguous()
+    assert tuple(attention_weights.shape)  == (bs * self.num_sequences * self.num_heads, 1, num_query, self.num_levels * self.num_points)
+    # attention [bs * num_sequences * num_heads, head_dims, nq, 1(by sum after elementwise multiplication)]
+    # --------> [bs * num_sequences, num_heads * head_dims(==embed_dims), nq]
+    # --------> [bs * num_sequences, nq, embed_dims]
+    attention = (v * attention_weights).sum(-1).view(bs * self.num_sequences, self.num_heads * self.head_dims, num_query).transpose(1, 2).contiguous()
     #####################################################################################################################################################################
     # end of attention computation ######################################################################################################################################
     #####################################################################################################################################################################

@@ -33,15 +33,15 @@ def test_spatial_cross_attention():
   num_levels   = 4
   num_points   = 2
 
-  num_query    = 32
-  num_key      = 32
-  num_value    = 32
+  num_query    = 16
+  num_key      = 16
+  num_value    = 16
   query = torch.rand(size=(batch_size,num_query,embed_dims)).to(device)
   key   = torch.rand(size=(num_cams,batch_size,num_key,embed_dims)).to(device)
   value = torch.rand(size=(num_cams,batch_size,num_value,embed_dims)).to(device)
 
   reference_points = torch.rand(size=(batch_size,num_query,num_zAnchors,2)).to(device)
-  spatial_shapes = torch.Tensor([[1,2],[2,4],[3,6],[1,4]]).to(device)
+  spatial_shapes = torch.Tensor([[1,1],[2,2],[3,3],[1,2]]).to(device)
   reference_points_cam = torch.rand(num_cams, batch_size, num_query, num_zAnchors, 2).to(device)
   bev_mask = torch.rand(num_cams, batch_size, num_query, num_zAnchors).to(device)
 
@@ -82,6 +82,7 @@ def test_bev_former_layer():
   spat_num_heads      = 8
   spat_num_levels     = 4
   spat_num_points     = 2
+
   temp_num_sequences  = 2
   temp_dropout        = 0.1
   temp_embed_dims     = 256
@@ -91,12 +92,14 @@ def test_bev_former_layer():
 
   spat_num_key        = 32
   spat_num_value      = 32
+
   temp_num_query      = 16
   temp_num_key        = 16
   temp_num_value      = 16
 
   spat_key   = torch.rand(size=(spat_num_cams,batch_size,spat_num_key,spat_embed_dims)).to(device)
   spat_value = torch.rand(size=(spat_num_cams,batch_size,spat_num_value,spat_embed_dims)).to(device)
+
   temp_query = torch.rand(size=(batch_size,temp_num_query,temp_embed_dims)).to(device)
   temp_key   = torch.rand(size=(batch_size,temp_num_key,temp_embed_dims)).to(device)
   temp_value = torch.rand(size=(batch_size,temp_num_value,temp_embed_dims)).to(device)
