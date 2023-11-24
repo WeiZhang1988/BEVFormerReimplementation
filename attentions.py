@@ -67,7 +67,6 @@ class SpatialCrossAttention(nn.Module):
     assert num_cams == self.num_cams, "camera numbers must matched"
     assert num_key  == num_value,     "number of value must equals to number of key"
     bs = bs_q
-    num_levels = reference_points_cam.size(3)
     indices = []
     # traverse all cameras:
     #   sum up and squeeze in last dimension from first batch
@@ -275,8 +274,8 @@ class TemporalSelfAttention(nn.Module):
     query_list = [query for _ in range(self.num_sequences)] 
     key_list   = key_hist
     value_list = value_hist
-    key_list.insert(0,query)
-    value_list.insert(0,query)
+    #key_list.insert(0,query)
+    #value_list.insert(0,query)
     bs, num_query, _ = query.shape
     bs, num_key,   _ = key_list[0].shape
     bs, num_value, _ = value_list[0].shape
@@ -290,8 +289,6 @@ class TemporalSelfAttention(nn.Module):
     # values  [bs, num_sequences * num_value, embed_dims]
     # ------> [bs * num_sequences, num_value, embed_dims]
     values = torch.cat(value_list,dim=1).view(bs * self.num_sequences, num_value, self.embed_dims)
-    assert num_key   == self.num_levels * self.num_points,   "total key number does not match numbers of levels and points"
-    assert num_value == self.num_levels * self.num_points,   "total value number does not match numbers of levels and points"
     # reference_points [bs, num_query,                 num_levels, 2]
     # ---------------> [bs * num_sequences, num_query, num_levels, 2]
     reference_points_list = [reference_points for _ in range(self.num_sequences)] 
