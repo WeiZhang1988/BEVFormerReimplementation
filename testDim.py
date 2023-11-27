@@ -111,15 +111,14 @@ def test_bev_former_layer():
 
   spat_reference_points = torch.rand(size=(batch_size,temp_num_query,spat_num_zAnchors,2)).to(device)
   spat_spatial_shapes = torch.Tensor([[1,2],[2,4],[3,6],[1,4]]).to(device)
-  spat_reference_points_cam = torch.rand(spat_num_cams, batch_size, query_H*query_W, spat_num_zAnchors, 2).to(device)
-  spat_bev_mask = torch.rand(spat_num_cams, batch_size, query_H*query_W, spat_num_zAnchors).to(device)
+  spat_lidar2img_trans = torch.rand(size=(batch_size, spat_num_cams, 4, 4)).to(device)
 
   temp_reference_points = torch.rand(size=(batch_size,temp_num_query,temp_num_levels,2)).to(device)
   temp_spatial_shapes = torch.Tensor([[10,10],[10,10],[10,10],[10,10]]).to(device)
 
   bev = BEVFormerLayer(spat_num_cams=spat_num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
                        query_H=query_H,query_W=query_W,query_Z=query_Z,query_C=query_C,temp_num_sequences=temp_num_sequences,temp_dropout=temp_dropout,temp_embed_dims=temp_embed_dims,temp_num_heads=temp_num_heads,temp_num_levels=temp_num_levels,temp_num_points=temp_num_points,device=device)
-  res = bev(spat_key,spat_value,spat_spatial_shapes=spat_spatial_shapes,spat_reference_points_cam=spat_reference_points_cam,spat_bev_mask=spat_bev_mask,temp_spatial_shapes=temp_spatial_shapes)
+  res = bev(spat_key,spat_value,spat_spatial_shapes=spat_spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans,temp_spatial_shapes=temp_spatial_shapes)
   print("bev ",res.shape)
 
 

@@ -62,14 +62,16 @@ class Encoder(nn.Module):
     # -----> [bs, num_zAnchors, query_H * query_W, 3]
     ref_3d = torch.stack((xs, ys, zs), -1)
     ref_3d = ref_3d.permute(0, 3, 1, 2).flatten(2).permute(0, 2, 1)
-    ref_3d = ref_3d[None].repeat(bs, 1, 1, 1)#stop here
+    ref_3d = ref_3d[None].repeat(bs, 1, 1, 1)
 
 
 class BEVFormerLayer(nn.Module):
   """
   Args:
-    image_shape        (list):  The shap of input image
+    image_shape       (list):       The shap of input image
       Default: [372,640]
+    point_cloud_range (Tensor [6]): The range of point cloud
+      Default: [0,1,2,3,4,5]
     -----Spatial-----
     spat_num_cams      (int):   [spatial attention] The number of cameras
       Default: 6 
@@ -110,12 +112,13 @@ class BEVFormerLayer(nn.Module):
     device (torch.device): The device
       Default: cpu
   """
-  def __init__(self,image_shape=[372,640],
+  def __init__(self,image_shape=[372,640], point_cloud_range=[0,1,2,3,4,5],
                     spat_num_cams=6,spat_num_zAnchors=4,spat_dropout=0.1,spat_embed_dims=256,spat_num_heads=8,spat_num_levels=4,spat_num_points=2,\
                     query_H=200,query_W=200,query_Z=8.0,query_C=3,temp_num_sequences=2,temp_dropout=0.1,temp_embed_dims=256,temp_num_heads=8,temp_num_levels=4,temp_num_points=4,device=torch.device("cpu")):
     super().__init__()
     assert spat_embed_dims == temp_embed_dims, "embed_dims for spatial and temperal attention must be the same"
     self.image_shape          = image_shape
+    self.point_cloud_range    = point_cloud_range
     self.query_H              = query_H
     self.query_W              = query_W
     self.query_Z              = query_Z
@@ -151,20 +154,20 @@ class BEVFormerLayer(nn.Module):
     self.NN_ffn         = nn.Linear(embed_dims,embed_dims,device=device)
     self.temp_key_hist     = [self.query for _ in range(temp_num_sequences)]
     self.temp_value_hist   = [self.query for _ in range(temp_num_sequences)]
-  def forward(self,spat_key,spat_value,spat_spatial_shapes=None,spat_reference_points_cam=None,spat_bev_mask=None,temp_spatial_shapes=None):
+  def forward(self,spat_key,spat_value,spat_spatial_shapes=None,spat_lidar2img_trans=None,temp_spatial_shapes=None):
     """
     Args:
       spat_key                    (Tensor [num_cams, bs, num_key, embed_dims]):       [spatial attention] The key
       spat_value                  (Tensor [num_cams, bs, num_value, embed_dims]):     [spatial attention] The value
       spat_spatial_shapes         (Tensor [num_levels, 2]):                           [spatial attention] The spatial shape of features in different levels
-      spat_reference_points_cam   (Tensor [num_cam, bs, num_query, num_zAnchor, 2]):  [spatial attention] The image pixel ratio projected from reference points to each camera
-      spat_bev_mask               (Tensor [num_cam, bs, num_query, num_zAnchor]):     [spatial attention] Which of reference_points_cam is valid
+      spat_lidar2img_trans        (Tensor [bs, num_cams, 4, 4]):                      [spatial attention] The lidar2image transformation matrices
       temp_spatial_shapes         (Tensor [num_levels, 2]):                           [temporal attention] The spatial shape of features in different levels
     Returns:
       currentBEV                  (Tensor [bs, num_query, emded_dims])
     """
     _,bs,_,_ = spat_key.shape
     ref_3d, ref_2d = self.cal_reference_points(self.query_Z,bs)
+    spat_reference_points_cam, spat_bev_mask = self.sample_points(ref_3d, spat_lidar2img_trans)
     self.query = self.query.repeat(bs, 1, 1)
     for i,key in enumerate(self.temp_key_hist):
       self.temp_key_hist[i] = key.repeat(bs, 1, 1)
@@ -215,27 +218,26 @@ class BEVFormerLayer(nn.Module):
     ref_2d = torch.stack((ref_x, ref_y), -1)
     ref_2d = ref_2d.repeat(bs, 1, 1).unsqueeze(2).repeat(1, 1, self.temp_num_levels, 1)
     return ref_3d, ref_2d
-  def sample_points(self, reference_points, point_cloud_range, lidar2img_trans):
+  def sample_points(self, reference_points, lidar2img_trans):
     """
     Args:
       reference_points  (Tensor [bs, query_H * query_W, num_zAnchors, 3]):  The 3d reference points
-      point_cloud_range (Tensor [6]):                                       The range of point cloud
       lidar2img_trans   (Tensor [bs, num_cams, 4, 4]):                      The lidar2image transformation matrices
     Returns:
-      ref_3d (Tensor [bs, query_H * query_W, num_zAnchors, 3]): The 3d reference points for spatial attention
-      ref_2d (Tensor [bs, query_H * query_W, temp_num_levels, 2]): The 2d reference points for temporal attention
+      reference_points_cam (Tensor [num_cams, bs, num_query, num_zAnchors, 4]): The reference points in camera frame
+      bev_mask             (Tensor [num_cams, bs, num_query, num_zAnchors, 1]): The bev mask showing which query is seenable
     """
     num_cams = lidar2img_trans.size(1)
-    assert num_cams == self.num_cams, "number of cameras must match"
-    reference_points[..., 0:1] = reference_points[..., 0:1] * (point_cloud_range[3] - point_cloud_range[0]) + point_cloud_range[0]
-    reference_points[..., 1:2] = reference_points[..., 1:2] * (point_cloud_range[4] - point_cloud_range[1]) + point_cloud_range[1]
-    reference_points[..., 2:3] = reference_points[..., 2:3] * (point_cloud_range[5] - point_cloud_range[2]) + point_cloud_range[2]
+    assert num_cams == self.spat_num_cams, "number of cameras must match"
+    reference_points[..., 0:1] = reference_points[..., 0:1] * (self.point_cloud_range[3] - self.point_cloud_range[0]) + self.point_cloud_range[0]
+    reference_points[..., 1:2] = reference_points[..., 1:2] * (self.point_cloud_range[4] - self.point_cloud_range[1]) + self.point_cloud_range[1]
+    reference_points[..., 2:3] = reference_points[..., 2:3] * (self.point_cloud_range[5] - self.point_cloud_range[2]) + self.point_cloud_range[2]
     # reference_points [bs, query_H * query_W, num_zAnchors, 3]
     # ---------------> [bs, query_H * query_W, num_zAnchors, 4]
     # ---------------> [num_zAnchors, bs, query_H * query_W, 4]
     # ---------------> [num_zAnchors, bs, num_cams, query_H * query_W, 4, 1]
     reference_points = torch.cat((reference_points, torch.ones_like(reference_points[..., :1])), -1).permute(2, 0, 1, 3)[:, :, None, :, :].repeat(1, 1, num_cams, 1, 1).unsqueeze(-1)
-    num_zAnchors, bs, _, num_query, _ = reference_points.size()[:3]
+    num_zAnchors, bs, _, num_query, _, _ = reference_points.size()
     # lidar2img_trans [bs, num_cams, 4, 4]
     # --------------> [1, bs, num_cams, 1, 4, 4]
     # --------------> [num_zAnchors, bs, num_cams, num_query, 4, 4]
@@ -243,14 +245,18 @@ class BEVFormerLayer(nn.Module):
     # reference_points_cam [num_zAnchors, bs, num_cams, num_query, 4]
     reference_points_cam = torch.matmul(lidar2img_trans.to(torch.float32),reference_points.to(torch.float32)).squeeze(-1)
     eps = 1e-5
-    #bev_mask [num_zAnchors, bs, num_cams, num_query, 1]stop here to continue working on comment of dimensions
+    # bev_mask [num_zAnchors, bs, num_cams, num_query, 1]stop here to continue working on comment of dimensions
     bev_mask = (reference_points_cam[..., 2:3] > eps)
     reference_points_cam = reference_points_cam[..., 0:2] / torch.maximum(reference_points_cam[..., 2:3], torch.ones_like(reference_points_cam[..., 2:3]) * eps)
     reference_points_cam[..., 0] /= self.image_shape[1]
     reference_points_cam[..., 1] /= self.image_shape[0]
-    reference_points_cam = reference_points_cam.permute(2, 1, 3, 0, 4)
     bev_mask = (bev_mask & (reference_points_cam[..., 1:2] > 0.0) & (reference_points_cam[..., 1:2] < 1.0) & (reference_points_cam[..., 0:1] < 1.0) & (reference_points_cam[..., 0:1] > 0.0))
     bev_mask = torch.nan_to_num(bev_mask)
+    # reference_points_cam [num_zAnchors, bs, num_cams, num_query, 4]
+    # -------------------> [num_cams, bs, num_query, num_zAnchors, 4]
+    reference_points_cam = reference_points_cam.permute(2, 1, 3, 0, 4)
+    # bev_mask [num_zAnchors, bs, num_cams, num_query, 1]
+    # -------> [num_cams, bs, num_query, num_zAnchors, 1]
     bev_mask = bev_mask.permute(2, 1, 3, 0, 4).squeeze(-1)
     return reference_points_cam, bev_mask
     
