@@ -7,62 +7,39 @@ from attentions import *
 
 
 class Encoder(nn.Module):
-  def __init__(self,query_H,query_W,query_C,\
-                    spat_num_cams=6,spat_num_zAnchors=4,spat_dropout=0.1,spat_embed_dims=256,spat_num_heads=8,spat_num_levels=4,spat_num_points=2,\
-                    temp_num_sequences=2,temp_dropout=0.1,temp_embed_dims=256,temp_num_heads=8,temp_num_levels=4,temp_num_points=4,device=torch.device("cpu")):
+  def __init__(self,backbone=None,bevformerlayer=None,device=torch.device("cpu")):
     super().__init__()
-    assert query_C == temp_embed_dims, "query_C and temp_embed_dims must be the same to simplify structure"
-    self.query_H              = query_H
-    self.query_W              = query_W
-    self.query_C              = query_C
-    self.num_query            = query_H * query_W
-    self.spat_num_cams        = spat_num_cams
-    self.spat_num_zAnchors    = spat_num_zAnchors
-    self.spat_dropout         = spat_dropout
-    self.spat_embed_dims      = spat_embed_dims
-    self.spat_num_heads       = spat_num_heads
-    self.spat_num_levels      = spat_num_levels
-    self.spat_num_points      = spat_num_points
-    self.temp_num_sequences   = temp_num_sequences
-    self.temp_dropout         = temp_dropout
-    self.temp_embed_dims      = temp_embed_dims
-    self.temp_num_heads       = temp_num_heads
-    self.temp_num_levels      = temp_num_levels
-    self.temp_num_points      = temp_num_points
-    self.device               = device
-    embed_dims                = spat_embed_dims
-    self.embed_dims           = embed_dims
-    # self.NNP_query_origin [1(extends to bs), num_query, embed_dims]
-    self.NNP_query_origin  = nn.Parameter(torch.ones(1,query_H*query_W,query_C,device=device)*0.98)
-    # self.NNP_query_pos [1(extends to bs), num_query, embed_dims]
-    self.NNP_query_pos     = nn.Parameter(torch.ones(1,query_H*query_W,temp_embed_dims,device=device)*0.95)
-    # self.NNP_bev_pos [1(extends to bs), num_query, embed_dims]
-    self.NNP_bev_pos       = nn.Parameter(torch.ones(1,query_H*query_W,temp_embed_dims,device=device)*0.95)
-    # self.query [1(extends to bs), num_query, embed_dims]
-    self.temp_query        = self.NNP_query_origin + self.NNP_query_pos
-    self.NN_bevFormerLayer = BEVFormerLayer(spat_num_cams,spat_num_zAnchors,spat_dropout,spat_embed_dims,spat_num_heads,spat_num_levels,spat_num_points,\
-                                            temp_num_sequences,temp_dropout,temp_embed_dims,temp_num_heads,temp_num_levels,temp_num_points,device)
-    self.temp_key_hist     = [self.query for _ in range(temp_num_sequences)]
-    self.temp_value_hist   = [self.query for _ in range(temp_num_sequences)]
-  def forward(self,embed_features,spat_spatial_shapes,spat_reference_points):
-    """
-    Args:
-      embed_features (Tensor [num_cams, bs, num_value(==num_key), embed_dims]): 
-    """
-    bev = self.NN_bevFormerLayer(embed_features,embed_features, self.temp_query,self.temp_key_hist,self.temp_value_hist,spat_spatial_shapes=spat_spatial_shapes,spat_reference_points=spat_reference_points,spat_reference_points_cam=spat_reference_points_cam,spat_bev_mask=spat_bev_mask,temp_spatial_shapes=temp_spatial_shapes,temp_reference_points=temp_reference_points)
-  def cal_reference_points(self,depth,bs):
-    zs = torch.linspace(0.5, depth - 0.5, self.spat_num_zAnchors, device=self.device).view(self.spat_num_zAnchors, 1, 1).expand(self.spat_num_zAnchors, self.query_H, self.query_W) / self.spat_num_zAnchors
-    xs = torch.linspace(0.5, self.query_W- 0.5, self.query_W, device=self.device).view(1, 1, self.query_W).expand(self.spat_num_zAnchors, self.query_H, self.query_W) / self.query_W
-    ys = torch.linspace(0.5, self.query_H - 0.5, self.query_H, device=self.device).view(1, self.query_H, 1).expand(self.spat_num_zAnchors, self.query_H, self.query_W) / self.query_H
-    # ref_3d [num_zAnchors, query_H, query_W]
-    # -----> [num_zAnchors, query_H, query_W, 3]
-    # -----> [num_zAnchors, 3, query_H, query_W]
-    # -----> [num_zAnchors, 3, query_H * query_W]
-    # -----> [num_zAnchors, query_H * query_W, 3]
-    # -----> [bs, num_zAnchors, query_H * query_W, 3]
-    ref_3d = torch.stack((xs, ys, zs), -1)
-    ref_3d = ref_3d.permute(0, 3, 1, 2).flatten(2).permute(0, 2, 1)
-    ref_3d = ref_3d[None].repeat(bs, 1, 1, 1)
+    self.backbone       = backbone
+    self.bevformerlayer = bevformerlayer
+    self.num_cams       = bevformerlayer.spat_num_cams
+    self.num_levels     = bevformerlayer.spat_num_levels
+    self.feat_channels  = backbone.stage_out_channels[-1]
+    self.embed_dims     = bevformerlayer.spat_embed_dims
+    self.NN_feat_embed   = nn.Linear(self.feat_channels,self.embed_dims).to(device)
+    self.NNP_cams_embed  = nn.Parameter(torch.ones(self.num_cams,self.embed_dims,device=device)*0.95)
+    self.NNP_level_embed = nn.Parameter(torch.ones(self.num_levels,self.embed_dims,device=device)*0.95)
+
+  def forward(self,list_leveled_images,spat_lidar2img_trans):
+    feat_flatten   = []
+    spatial_shapes = []
+    for lvl, images in list_leveled_images:
+      # feat_embed [bs, num_cams, c, h, w]
+      feat_embed = self.NN_feat_embed(self.backbone(images))
+      bs, num_cams, embed_dims, h, w = feat_embed.shape
+      spatial_shape = (h, w)
+      # feat_embed [bs, num_cams,  embed_dims, h, w]
+      # ---------> [num_cams, bs, h * w, embed_dims]
+      feat_embed = feat_embed.flatten(3).permute(1, 0, 3, 2) + self.NNP_cams_embed[:, None, None, :] + self.NNP_level_embed[None, None, lvl:lvl + 1, :]
+      spatial_shapes.append(spatial_shape)
+      feat_flatten.append(feat_embed)
+    # feat_embed [num_cams, bs, h * w, embed_dims]
+    # ---------> [num_cams, bs, H * W, embed_dims]
+    feat_flatten = torch.cat(feat_flatten, 2)
+    # spatial_shapes [l, 2]
+    spatial_shapes = torch.as_tensor(spatial_shapes)
+    bev = self.bevformerlayer(feat_flatten,feat_flatten,spat_spatial_shapes=spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans)
+    return bev
+
 
 
 class BEVFormerLayer(nn.Module):
@@ -105,7 +82,7 @@ class BEVFormerLayer(nn.Module):
     temp_num_heads     (int):   [temporal attention] The number of heads.
       Default: 8   
     temp_num_levels    (int):   [temporal attention] The number of scale levels in a single sequence
-      Default: 4   
+      Default: 1   
     temp_num_points    (int):   [temporal attention] The number of sampling points in a single level
       Default: 4
     -----Device-----
@@ -114,7 +91,7 @@ class BEVFormerLayer(nn.Module):
   """
   def __init__(self,image_shape=[372,640], point_cloud_range=[0,1,2,3,4,5],
                     spat_num_cams=6,spat_num_zAnchors=4,spat_dropout=0.1,spat_embed_dims=256,spat_num_heads=8,spat_num_levels=4,spat_num_points=2,\
-                    query_H=200,query_W=200,query_Z=8.0,query_C=3,temp_num_sequences=2,temp_dropout=0.1,temp_embed_dims=256,temp_num_heads=8,temp_num_levels=4,temp_num_points=4,device=torch.device("cpu")):
+                    query_H=200,query_W=200,query_Z=8.0,query_C=3,temp_num_sequences=2,temp_dropout=0.1,temp_embed_dims=256,temp_num_heads=8,temp_num_levels=1,temp_num_points=4,device=torch.device("cpu")):
     super().__init__()
     assert spat_embed_dims == temp_embed_dims, "embed_dims for spatial and temperal attention must be the same"
     self.image_shape          = image_shape
@@ -141,11 +118,13 @@ class BEVFormerLayer(nn.Module):
     self.embed_dims           = embed_dims
     # self.NNP_query_origin [1(extends to bs), num_query, embed_dims]
     self.NNP_query_origin  = nn.Parameter(torch.ones(1,query_H*query_W,query_C,device=device)*0.98)
-    self.NN_projQ       = nn.Linear(query_C,temp_embed_dims).to(device)
+    self.NN_projQ          = nn.Linear(query_C,temp_embed_dims).to(device)
     # self.NNP_query_pos [1(extends to bs), num_query, embed_dims]
     self.NNP_query_pos     = nn.Parameter(torch.ones(1,query_H*query_W,temp_embed_dims,device=device)*0.95)
     # self.query [1(extends to bs), num_query, embed_dims]
     self.query             = self.NN_projQ(self.NNP_query_origin) + self.NNP_query_pos
+    # self.temp_spatial_shapes [level(fixed to 1 here), 2]
+    self.temp_spatial_shapes = torch.Tensor([[query_H, query_W]]).to(device)
     self.NN_tempAttn    = TemporalSelfAttention(temp_num_sequences,temp_dropout,temp_embed_dims,temp_num_heads,temp_num_levels,temp_num_points,device)
     self.NN_spatAttn    = SpatialCrossAttention(spat_num_cams,spat_num_zAnchors,spat_dropout,spat_embed_dims,spat_num_heads,spat_num_levels,spat_num_points,device)
     self.NN_addNorm1    = AddAndNormLayer(None,embed_dims,device=device)
@@ -154,14 +133,13 @@ class BEVFormerLayer(nn.Module):
     self.NN_ffn         = nn.Linear(embed_dims,embed_dims,device=device)
     self.temp_key_hist     = [self.query for _ in range(temp_num_sequences)]
     self.temp_value_hist   = [self.query for _ in range(temp_num_sequences)]
-  def forward(self,spat_key,spat_value,spat_spatial_shapes=None,spat_lidar2img_trans=None,temp_spatial_shapes=None):
+  def forward(self,spat_key,spat_value,spat_spatial_shapes=None,spat_lidar2img_trans=None):
     """
     Args:
-      spat_key                    (Tensor [num_cams, bs, num_key, embed_dims]):       [spatial attention] The key
-      spat_value                  (Tensor [num_cams, bs, num_value, embed_dims]):     [spatial attention] The value
-      spat_spatial_shapes         (Tensor [num_levels, 2]):                           [spatial attention] The spatial shape of features in different levels
-      spat_lidar2img_trans        (Tensor [bs, num_cams, 4, 4]):                      [spatial attention] The lidar2image transformation matrices
-      temp_spatial_shapes         (Tensor [num_levels, 2]):                           [temporal attention] The spatial shape of features in different levels
+      spat_key                    (Tensor [num_cams, bs, num_key, embed_dims]):       [spatial attention]  The key
+      spat_value                  (Tensor [num_cams, bs, num_value, embed_dims]):     [spatial attention]  The value
+      spat_spatial_shapes         (Tensor [num_levels, 2]):                           [spatial attention]  The spatial shape of features in different levels
+      spat_lidar2img_trans        (Tensor [bs, num_cams, 4, 4]):                      [spatial attention]  The lidar2image transformation matrices
     Returns:
       currentBEV                  (Tensor [bs, num_query, emded_dims])
     """
@@ -174,7 +152,7 @@ class BEVFormerLayer(nn.Module):
     for i,value in enumerate(self.temp_value_hist):
       self.temp_value_hist[i] = value.repeat(bs,1,1)
     #<------------------main body
-    tempAttn   = self.NN_tempAttn(query=self.query,key_hist=self.temp_key_hist,value_hist=self.temp_value_hist,reference_points=ref_2d,spatial_shapes=temp_spatial_shapes)
+    tempAttn   = self.NN_tempAttn(query=self.query,key_hist=self.temp_key_hist,value_hist=self.temp_value_hist,reference_points=ref_2d,spatial_shapes=self.temp_spatial_shapes)
     addNorm1   = self.NN_addNorm1(x=tempAttn,y=self.query)
     spatAttn   = self.NN_spatAttn(query=addNorm1,key=spat_key,value=spat_value,reference_points=ref_3d,spatial_shapes=spat_spatial_shapes,reference_points_cam=spat_reference_points_cam,bev_mask=spat_bev_mask)
     addNorm2   = self.NN_addNorm2(x=spatAttn,y=addNorm1)
@@ -245,7 +223,7 @@ class BEVFormerLayer(nn.Module):
     # reference_points_cam [num_zAnchors, bs, num_cams, num_query, 4]
     reference_points_cam = torch.matmul(lidar2img_trans.to(torch.float32),reference_points.to(torch.float32)).squeeze(-1)
     eps = 1e-5
-    # bev_mask [num_zAnchors, bs, num_cams, num_query, 1]stop here to continue working on comment of dimensions
+    # bev_mask [num_zAnchors, bs, num_cams, num_query, 1]
     bev_mask = (reference_points_cam[..., 2:3] > eps)
     reference_points_cam = reference_points_cam[..., 0:2] / torch.maximum(reference_points_cam[..., 2:3], torch.ones_like(reference_points_cam[..., 2:3]) * eps)
     reference_points_cam[..., 0] /= self.image_shape[1]

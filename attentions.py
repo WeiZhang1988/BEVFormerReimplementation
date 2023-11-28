@@ -231,7 +231,7 @@ class TemporalSelfAttention(nn.Module):
     num_heads     (int):   The number of heads.
       Default: 8   
     num_levels    (int):   The number of scale levels in a single sequence
-      Default: 4   
+      Default: 1   
     num_points    (int):   The number of sampling points in a single level
       Default: 4
     -----Device-----
@@ -239,7 +239,7 @@ class TemporalSelfAttention(nn.Module):
       Default: cpu
   -------------------------------------------------------------------------------------------------
   """
-  def __init__(self,num_sequences=2,dropout=0.1,embed_dims=256,num_heads=8,num_levels=4,num_points=4,device=torch.device("cpu")):
+  def __init__(self,num_sequences=2,dropout=0.1,embed_dims=256,num_heads=8,num_levels=1,num_points=4,device=torch.device("cpu")):
     super().__init__()
     self.num_sequences = num_sequences
     self.dropout       = dropout

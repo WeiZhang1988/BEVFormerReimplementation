@@ -30,10 +30,10 @@ class BackBone(nn.Module):
     Args:
       images    (Tensor [num_cams, bs, num_channels, height, width]): The input images
     Returns:
-      Features  (Tensor [num_cams, bs, feature_dims]): The output features. The features dimension is the last of stage_out_channels
+      Features  (tensor [bs, num_cams, stage_out_channels[-1], height/2/2/2/2, width/2/2/2/2]): The output features
     """
     num_cams, bs, num_channels, height, width = images.size()
-    features = self.NN_vovnet(images.view(num_cams * bs, num_channels, height, width)).view(num_cams, bs, -1)
+    features = self.NN_vovnet(images.view(num_cams * bs, num_channels, height, width)).view(bs, num_cams, self.stage_out_channels[-1], int(height/2/2/2/2), int(width/2/2/2/2))
     return features
 
 class VoVNet(nn.Module):
@@ -71,7 +71,7 @@ class VoVNet(nn.Module):
     Args:
       images    (Tensor [bs, num_channels, height, width]):                           The input images
     Returns:
-      Features  (tensor [bs, stage_out_channels[-1], height/2/2/2/2, width/2/2/2/2]): The output features. The features dimension is the last of stage_out_channels
+      Features  (tensor [bs, stage_out_channels[-1], height/2/2/2/2, width/2/2/2/2]): The output features
     """
     # images      [bs, num_channels,            height,         width]
     # ->features  [bs, 128(fixed in the impl.), height/2,       width/2]

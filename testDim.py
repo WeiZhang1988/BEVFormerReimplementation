@@ -92,7 +92,7 @@ def test_bev_former_layer():
   temp_dropout        = 0.1
   temp_embed_dims     = 256
   temp_num_heads      = 8
-  temp_num_levels     = 4
+  temp_num_levels     = 1
   temp_num_points     = 4
 
   spat_num_key        = 32
@@ -118,7 +118,7 @@ def test_bev_former_layer():
 
   bev = BEVFormerLayer(spat_num_cams=spat_num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
                        query_H=query_H,query_W=query_W,query_Z=query_Z,query_C=query_C,temp_num_sequences=temp_num_sequences,temp_dropout=temp_dropout,temp_embed_dims=temp_embed_dims,temp_num_heads=temp_num_heads,temp_num_levels=temp_num_levels,temp_num_points=temp_num_points,device=device)
-  res = bev(spat_key,spat_value,spat_spatial_shapes=spat_spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans,temp_spatial_shapes=temp_spatial_shapes)
+  res = bev(spat_key,spat_value,spat_spatial_shapes=spat_spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans)
   print("bev ",res.shape)
 
 
