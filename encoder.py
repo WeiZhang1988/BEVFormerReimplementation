@@ -18,25 +18,33 @@ class Encoder(nn.Module):
     self.NN_feat_embed   = nn.Linear(self.feat_channels,self.embed_dims).to(device)
     self.NNP_cams_embed  = nn.Parameter(torch.ones(self.num_cams,self.embed_dims,device=device)*0.95)
     self.NNP_level_embed = nn.Parameter(torch.ones(self.num_levels,self.embed_dims,device=device)*0.95)
+    self.device         = device
 
   def forward(self,list_leveled_images,spat_lidar2img_trans):
+    """
+    Args:
+      list_leveled_images       ([[num_cams, bs, num_channels, height, width],...]):  The list of images. List length is number of levels
+      spat_lidar2img_trans      (Tensor [bs, num_cams, 4, 4]):                        The lidar2image transformation matrices
+    Return:
+      currentBEV                  (Tensor [bs, num_query, emded_dims])
+    """
     feat_flatten   = []
     spatial_shapes = []
-    for lvl, images in list_leveled_images:
-      # feat_embed [bs, num_cams, c, h, w]
-      feat_embed = self.NN_feat_embed(self.backbone(images))
-      bs, num_cams, embed_dims, h, w = feat_embed.shape
+    for lvl, images in enumerate(list_leveled_images):
+      # feat_embed [bs, num_cams, h, w, embed_dims]
+      feat_embed = self.NN_feat_embed(self.backbone(images).permute(0,1,3,4,2))
+      bs, num_cams, h, w, embed_dims = feat_embed.shape
       spatial_shape = (h, w)
-      # feat_embed [bs, num_cams,  embed_dims, h, w]
+      # feat_embed [bs, num_cams, h, w,  embed_dims]
       # ---------> [num_cams, bs, h * w, embed_dims]
-      feat_embed = feat_embed.flatten(3).permute(1, 0, 3, 2) + self.NNP_cams_embed[:, None, None, :] + self.NNP_level_embed[None, None, lvl:lvl + 1, :]
+      feat_embed = feat_embed.flatten(2,3).permute(1, 0, 2, 3) + self.NNP_cams_embed[:, None, None, :] + self.NNP_level_embed[None, None, lvl:lvl + 1, :]
       spatial_shapes.append(spatial_shape)
       feat_flatten.append(feat_embed)
     # feat_embed [num_cams, bs, h * w, embed_dims]
     # ---------> [num_cams, bs, H * W, embed_dims]
-    feat_flatten = torch.cat(feat_flatten, 2)
+    feat_flatten = torch.cat(feat_flatten, 2).to(self.device)
     # spatial_shapes [l, 2]
-    spatial_shapes = torch.as_tensor(spatial_shapes)
+    spatial_shapes = torch.as_tensor(spatial_shapes).to(self.device)
     bev = self.bevformerlayer(feat_flatten,feat_flatten,spat_spatial_shapes=spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans)
     return bev
 
@@ -48,7 +56,7 @@ class BEVFormerLayer(nn.Module):
     image_shape       (list):       The shap of input image
       Default: [372,640]
     point_cloud_range (Tensor [6]): The range of point cloud
-      Default: [0,1,2,3,4,5]
+      Default: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
     -----Spatial-----
     spat_num_cams      (int):   [spatial attention] The number of cameras
       Default: 6 
@@ -89,7 +97,7 @@ class BEVFormerLayer(nn.Module):
     device (torch.device): The device
       Default: cpu
   """
-  def __init__(self,image_shape=[372,640], point_cloud_range=[0,1,2,3,4,5],
+  def __init__(self,image_shape=[372,640], point_cloud_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
                     spat_num_cams=6,spat_num_zAnchors=4,spat_dropout=0.1,spat_embed_dims=256,spat_num_heads=8,spat_num_levels=4,spat_num_points=2,\
                     query_H=200,query_W=200,query_Z=8.0,query_C=3,temp_num_sequences=2,temp_dropout=0.1,temp_embed_dims=256,temp_num_heads=8,temp_num_levels=1,temp_num_points=4,device=torch.device("cpu")):
     super().__init__()

@@ -7,6 +7,7 @@ from encoder import *
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#device = torch.device("cpu")
 
 
 def test_backbone():
@@ -121,8 +122,55 @@ def test_bev_former_layer():
   res = bev(spat_key,spat_value,spat_spatial_shapes=spat_spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans)
   print("bev ",res.shape)
 
+def test_encoder():
+  # common pars
+  batch_size            = 8
+  num_cams              = 2
+  image_shape           = [96,96]
+  point_cloud_range     = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+  # backbone pars
+  stage_middle_channels = [64, 80, 96, 112]
+  stage_out_channels    = [128, 256, 384, 512]
+  num_block_per_stage   = [1, 1, 2, 2]
+  num_layer_per_block   = 5
+  backbone = BackBone(stage_middle_channels,stage_out_channels,num_block_per_stage,num_layer_per_block,device)
+  #bevformerlayerpars
+  spat_num_zAnchors   = 4
+  spat_dropout        = 0.1
+  spat_embed_dims     = 256
+  spat_num_heads      = 8
+  spat_num_levels     = 2
+  spat_num_points     = 2
+
+  query_H=20
+  query_W=20
+  query_Z=4
+  query_C=3
+
+  temp_num_sequences  = 2
+  temp_dropout        = 0.1
+  temp_embed_dims     = 256
+  temp_num_heads      = 8
+  temp_num_levels     = 1
+  temp_num_points     = 4
+
+  bevformerlayer = BEVFormerLayer(image_shape=image_shape, point_cloud_range=point_cloud_range,\
+                       spat_num_cams=num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
+                       query_H=query_H,query_W=query_W,query_Z=query_Z,query_C=query_C,temp_num_sequences=temp_num_sequences,temp_dropout=temp_dropout,temp_embed_dims=temp_embed_dims,temp_num_heads=temp_num_heads,temp_num_levels=temp_num_levels,temp_num_points=temp_num_points,device=device)
+  encoder = Encoder(backbone=backbone,bevformerlayer=bevformerlayer,device=device)
+
+
+  list_leveled_images = [torch.rand(size=(num_cams, batch_size, 3, image_shape[0], image_shape[1])).to(device),
+                         torch.rand(size=(num_cams, batch_size, 3, int(image_shape[0]/2),     int(image_shape[1]/2))).to(device)]
+  spat_lidar2img_trans = torch.rand(size=(batch_size, num_cams, 4, 4)).to(device)
+  res = encoder(list_leveled_images,spat_lidar2img_trans)
+  print("enc",res.shape)
+
+
+
 
 test_backbone()
 test_spatial_cross_attention()
 test_temporal_self_attention()
 test_bev_former_layer()
+test_encoder()
