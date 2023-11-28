@@ -73,6 +73,28 @@ def test_temporal_self_attention():
   res = tsa(query,key_hist=[query,key],value_hist=[query,value],reference_points=reference_points,spatial_shapes=spatial_shapes)
   print("tsa ",res.shape)
 
+def test_custom_attention():
+  batch_size     = 8
+  dropout        = 0.1
+  embed_dims     = 256
+  num_heads      = 8
+  num_levels     = 4
+  num_points     = 4
+
+  num_query      = 16
+  num_key        = 16
+  num_value      = 16
+  query = torch.rand(size=(batch_size,num_query,embed_dims)).to(device)
+  key   = torch.rand(size=(batch_size,num_key,embed_dims)).to(device)
+  value = torch.rand(size=(batch_size,num_value,embed_dims)).to(device)
+
+  reference_points = torch.rand(size=(batch_size,num_query,num_levels,2)).to(device)
+  spatial_shapes = torch.Tensor([[1,1],[2,2],[3,3],[1,2]]).to(device)
+
+  csa = CustomAttention(dropout=dropout,embed_dims=embed_dims,num_heads=num_heads,num_levels=num_levels,num_points=num_points,device=device)
+  res = csa(query,key,value,reference_points=reference_points,spatial_shapes=spatial_shapes)
+  print("csa ",res.shape)
+
 def test_bev_former_layer():
   batch_size   = 8
 
@@ -172,5 +194,6 @@ def test_encoder():
 test_backbone()
 test_spatial_cross_attention()
 test_temporal_self_attention()
+test_custom_attention()
 test_bev_former_layer()
 test_encoder()
