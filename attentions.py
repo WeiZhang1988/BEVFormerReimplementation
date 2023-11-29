@@ -487,13 +487,13 @@ class CustomAttention(nn.Module):
       sampling_value_l_ = F.grid_sample(value_l_,sampling_grid_value_l_,mode='bilinear',padding_mode='zeros',align_corners=False)
       sampling_value_list.append(sampling_value_l_)
     # sampling_key_list  [[bs * num_heads, head_dims, 1, num_points ]....]
-    # ---------------->   [bs * num_heads, head_dims, 1, num_levels(get the dimension by stack in dim -2), num_points]
+    # ----->key_sampled   [bs * num_heads, head_dims, 1, num_levels(get the dimension by stack in dim -2), num_points]
     # ---------------->   [bs * num_heads, head_dims, 1 * num_levels * num_points (by flatten)]
     # ---------------->   [bs,  num_heads, head_dims, 1 * num_levels * num_points]
     # ---------------->   [bs,  1 * num_levels * num_points, num_heads, head_dims]
     key_sampled   = torch.stack(sampling_key_list, dim=-2).flatten(-3).view(bs, self.num_heads, self.head_dims, 1 * self.num_levels * self.num_points).permute(0,3,1,2).contiguous()
     # sampling_value_list  [[bs * num_heads, head_dims, n_query, num_points]....]
-    # ------------------>   [bs * num_heads, head_dims, n_query, num_levels(get the dimension by stack in dim -2), num_points]
+    # ----->value_sampled   [bs * num_heads, head_dims, n_query, num_levels(get the dimension by stack in dim -2), num_points]
     # ------------------>   [bs * num_heads, head_dims, n_query, num_levels * num_points(by flatten)]
     value_sampled = torch.stack(sampling_value_list, dim=-2).flatten(-2)
     assert key_sampled.shape[1]    == 1 * self.num_levels * self.num_points,  "number of sampled key corresponding to one query   must match numbers of levels * points * zAnchors"
@@ -501,7 +501,7 @@ class CustomAttention(nn.Module):
     assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
     # q, k [bs, num_query(or num_levels * num_points), num_heads, head_dims]
     q = self.NN_to_Q(query) 
-    k = self.NN_to_K(key)    
+    k = self.NN_to_K(key_sampled)    
     # v  [bs * num_heads, head_dims, num_query, num_levels * num_points]
     # -> [bs * num_heads, num_query, num_levels * num_points, head_dims]
     # -> [bs * num_heads, head_dims, num_query, num_levels * num_points]
@@ -529,5 +529,110 @@ class CustomAttention(nn.Module):
     # end of attention computation ######################################################################################################################################
     #####################################################################################################################################################################
     # attention [bs, num_query, embed_dims]
-    # return temporal attention [bs, num_query, embed_dims]
+    # return custom attention [bs, num_query, embed_dims]
     return self.NN_dropout(self.NN_output(attention)) + residual
+
+
+class FullAttention(nn.Module):
+  """
+  Args:
+    dropout       (float): The drop out rate
+      Default: 0.1
+    embed_dims    (int):   The embedding dimension of attention. The same as inputs embedding dimension.
+      Default: 256   
+    num_heads     (int):   The number of heads.
+      Default: 8   
+    num_levels    (int):   The number of scale levels in a single sequence
+      Default: 1   
+    num_points    (int):   The number of sampling points in a single level
+      Default: 4
+    -----Device-----
+    device (torch.device): The device
+      Default: cpu
+  -------------------------------------------------------------------------------------------------
+  """
+  def __init__(self,dropout=0.1,embed_dims=256,num_heads=8,num_levels=1,num_points=4,device=torch.device("cpu")):
+    super().__init__()
+    self.dropout       = dropout
+    self.embed_dims    = embed_dims
+    self.num_heads     = num_heads
+    self.num_levels    = num_levels
+    self.num_points    = num_points
+    self.device        = device
+    assert self.embed_dims % self.num_heads == 0, "embedding dimension must be divisible by number of heads"
+    self.head_dims      = self.embed_dims // self.num_heads
+    self.NN_to_Q             = nn.Linear(self.head_dims,self.head_dims).to(device)
+    self.NN_to_K             = nn.Linear(self.head_dims,self.head_dims).to(device)
+    self.NN_to_V             = nn.Linear(self.head_dims,self.head_dims).to(device)
+    self.NN_sampling_offsets = nn.Linear(self.head_dims,self.num_levels * self.num_points * 2).to(device)
+    self.NN_output           = nn.Linear(self.embed_dims,self.embed_dims).to(device)
+    self.NN_dropout          = nn.Dropout(dropout).to(device)
+  def forward(self,query,key,value):
+    """
+    Args:
+      query             (Tensor         [bs, num_query, embed_dims]):    The query
+      key               (Tensor         [bs, num_key,   embed_dims]):    The query
+      value             (Tensor         [bs, num_value, embed_dims]):    The query
+    Returns:
+      forwarded result  (tensor         [bs, num_query, embed_dims])
+    """
+    # residual [bs, num_query, embed_dims]
+    residual   = query
+    bs, num_query, _ = query.shape
+    bs, num_key,   _ = value.shape
+    bs, num_value, _ = value.shape
+    assert num_key == self.num_levels * self.num_points and num_value == self.num_levels * self.num_points, "in the leveled full attention, both num_key and num_value must equal to num_levels * num_points"
+    # query, key, value  [bs, num_query(or num_key or num_value), embed_dims]
+    # ---------------->  [bs, num_query(or num_key or num_value), num_heads, head_dims]
+    query = rearrange(query, 'b q (h d) -> b q h d', h=self.num_heads) 
+    key   = rearrange(key,   'b k (h d) -> b k h d', h=self.num_heads)
+    value = rearrange(value, 'b v (h d) -> b v h d', h=self.num_heads)
+    # q, k [bs, num_query(or num_key or num_value), num_heads, head_dims]
+    q = self.NN_to_Q(query) 
+    k = self.NN_to_K(key)    
+    v = self.NN_to_V(value)
+    # attention_weights [bs, num_query, num_heads, num_levels * num_points]
+    # ----------------> [bs, num_query, num_heads, num_levels,  num_points]
+     # ---------------->[bs, num_heads,     num_query,          num_levels,  num_points]
+    # ----------------> [bs * num_heads,    1(to extend to head_dims), num_query, num_levels * num_points]
+    attention_weights = einsum(q, k, 'b q h d, b k h d -> b q h k')
+    attention_weights = attention_weights.softmax(-1)
+    attention = rearrange(einsum(attention_weights, v, 'b q h v, b v h d -> b q h d'),'b q h d -> b q (h d)')
+    # return full attention [bs, num_query, embed_dims]
+    return self.NN_dropout(self.NN_output(attention)) + residual
+
+class AddAndNormLayer(nn.Module):
+  """
+  Args:
+    num_query (int): The number of query
+      Default: None
+    embed_dims(int): The embedding dimension
+      Default: 6
+    -----Device-----
+    device (torch.device): The device
+      Default: cpu
+  -------------------------------------------------------------------------------------------------
+  Note:
+    1, Input of this layer is of shape [bs, num_query, embed_dims]
+    2, This implementation can normalize last two dimensions, which are num_query and embed_dims, if num_query is provided.
+       Otherwise, only the last dimension which is embed_dims is normalized
+  """
+  def __init__(self,num_query=None, embed_dims=256,device=torch.device("cpu")):
+    super().__init__()
+    self.num_query  = num_query
+    self.embed_dims = embed_dims
+    self.device     = device
+    if num_query is not None:
+      self.NN_layerNorm = nn.LayerNorm([num_query,embed_dims],device=device)
+    else:
+      self.NN_layerNorm = nn.LayerNorm(embed_dims,device=device)
+  def forward(self,x,y):
+    """
+    Args:
+      x       (Tensor [bs, num_query, emded_dims]): The tensor to be added
+      y       (Tensor [bs, num_query, emded_dims]): The tensor to add
+    Returns:
+      addNorm (Tensor [bs, num_query, emded_dims])
+    """
+    added = x + y
+    return self.NN_layerNorm(added)

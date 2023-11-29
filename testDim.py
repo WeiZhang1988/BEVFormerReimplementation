@@ -4,6 +4,7 @@
 from attentions import *
 from backbone import *
 from encoder import *
+from decoder import *
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -78,8 +79,8 @@ def test_custom_attention():
   dropout        = 0.1
   embed_dims     = 256
   num_heads      = 8
-  num_levels     = 4
-  num_points     = 4
+  num_levels     = 1
+  num_points     = 16
 
   num_query      = 16
   num_key        = 16
@@ -89,7 +90,7 @@ def test_custom_attention():
   value = torch.rand(size=(batch_size,num_value,embed_dims)).to(device)
 
   reference_points = torch.rand(size=(batch_size,num_query,num_levels,2)).to(device)
-  spatial_shapes = torch.Tensor([[1,1],[2,2],[3,3],[1,2]]).to(device)
+  spatial_shapes = torch.Tensor([[4,4]]).to(device)
 
   csa = CustomAttention(dropout=dropout,embed_dims=embed_dims,num_heads=num_heads,num_levels=num_levels,num_points=num_points,device=device)
   res = csa(query,key,value,reference_points=reference_points,spatial_shapes=spatial_shapes)
@@ -188,6 +189,31 @@ def test_encoder():
   res = encoder(list_leveled_images,spat_lidar2img_trans)
   print("enc",res.shape)
 
+def test_decoder_layer():
+  batch_size = 8
+  full_num_query=400
+  full_dropout=0.1
+  full_embed_dims=256
+  full_num_heads=8
+  full_num_levels=1
+  full_num_points=400
+  query_H=20
+  query_W=20
+  custom_dropout=0.1
+  custom_embed_dims=256
+  custom_num_heads=8
+  custom_num_levels=1
+  custom_num_points=400
+  code_size=10
+
+  decoderlayer = DecoderLayer(full_num_query=full_num_query,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
+                              query_H=query_H,query_W=query_W,custom_dropout=custom_dropout,custom_embed_dims=custom_embed_dims,custom_num_heads=custom_num_heads,custom_num_levels=custom_num_levels,custom_num_points=custom_num_points,\
+                              code_size=code_size,device=device)
+
+  encoder_out = torch.rand(size=(batch_size,query_H*query_W,custom_embed_dims)).to(device)
+  res = decoderlayer(encoder_out)
+  print("del",res.shape)
+
 
 
 
@@ -197,3 +223,4 @@ test_temporal_self_attention()
 test_custom_attention()
 test_bev_former_layer()
 test_encoder()
+test_decoder_layer()
