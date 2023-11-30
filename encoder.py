@@ -7,14 +7,24 @@ from attentions import *
 
 
 class Encoder(nn.Module):
-  def __init__(self,backbone=None,bevformerlayer=None,device=torch.device("cpu")):
+  def __init__(self,backbone=None,encoderlayer=None,device=torch.device("cpu")):
+    """
+    Args:
+      backbone       (nn module):  The backbone module
+        Default: None
+      encoderlayer   (nn module):  The encoderlayer module
+        Default: None
+      -----Device-----
+      device (torch.device): The device
+        Default: cpu
+    """
     super().__init__()
     self.backbone       = backbone
-    self.bevformerlayer = bevformerlayer
-    self.num_cams       = bevformerlayer.spat_num_cams
-    self.num_levels     = bevformerlayer.spat_num_levels
+    self.encoderlayer   = encoderlayer
+    self.num_cams       = encoderlayer.spat_num_cams
+    self.num_levels     = encoderlayer.spat_num_levels
     self.feat_channels  = backbone.stage_out_channels[-1]
-    self.embed_dims     = bevformerlayer.spat_embed_dims
+    self.embed_dims     = encoderlayer.spat_embed_dims
     self.NN_feat_embed   = nn.Linear(self.feat_channels,self.embed_dims).to(device)
     self.NNP_cams_embed  = nn.Parameter(torch.ones(self.num_cams,self.embed_dims,device=device)*0.95)
     self.NNP_level_embed = nn.Parameter(torch.ones(self.num_levels,self.embed_dims,device=device)*0.95)
@@ -45,12 +55,12 @@ class Encoder(nn.Module):
     feat_flatten = torch.cat(feat_flatten, 2).to(self.device)
     # spatial_shapes [l, 2]
     spatial_shapes = torch.as_tensor(spatial_shapes).to(self.device)
-    bev = self.bevformerlayer(feat_flatten,feat_flatten,spat_spatial_shapes=spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans)
+    bev = self.encoderlayer(feat_flatten,feat_flatten,spat_spatial_shapes=spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans)
     return bev
 
 
 
-class BEVFormerLayer(nn.Module):
+class EncoderLayer(nn.Module):
   """
   Args:
     image_shape       (list):       The shap of input image

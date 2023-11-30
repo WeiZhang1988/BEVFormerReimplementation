@@ -140,10 +140,10 @@ def test_bev_former_layer():
   temp_reference_points = torch.rand(size=(batch_size,temp_num_query,temp_num_levels,2)).to(device)
   temp_spatial_shapes = torch.Tensor([[10,10],[10,10],[10,10],[10,10]]).to(device)
 
-  bev = BEVFormerLayer(spat_num_cams=spat_num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
+  enl = EncoderLayer(spat_num_cams=spat_num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
                        query_H=query_H,query_W=query_W,query_Z=query_Z,query_C=query_C,temp_num_sequences=temp_num_sequences,temp_dropout=temp_dropout,temp_embed_dims=temp_embed_dims,temp_num_heads=temp_num_heads,temp_num_levels=temp_num_levels,temp_num_points=temp_num_points,device=device)
-  res = bev(spat_key,spat_value,spat_spatial_shapes=spat_spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans)
-  print("bev ",res.shape)
+  res = enl(spat_key,spat_value,spat_spatial_shapes=spat_spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans)
+  print("enl ",res.shape)
 
 def test_encoder():
   # common pars
@@ -157,7 +157,7 @@ def test_encoder():
   num_block_per_stage   = [1, 1, 2, 2]
   num_layer_per_block   = 5
   backbone = BackBone(stage_middle_channels,stage_out_channels,num_block_per_stage,num_layer_per_block,device)
-  #bevformerlayerpars
+  # encoderlayer pars
   spat_num_zAnchors   = 4
   spat_dropout        = 0.1
   spat_embed_dims     = 256
@@ -177,10 +177,10 @@ def test_encoder():
   temp_num_levels     = 1
   temp_num_points     = 4
 
-  bevformerlayer = BEVFormerLayer(image_shape=image_shape, point_cloud_range=point_cloud_range,\
+  encoderlayer = EncoderLayer(image_shape=image_shape, point_cloud_range=point_cloud_range,\
                        spat_num_cams=num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
                        query_H=query_H,query_W=query_W,query_Z=query_Z,query_C=query_C,temp_num_sequences=temp_num_sequences,temp_dropout=temp_dropout,temp_embed_dims=temp_embed_dims,temp_num_heads=temp_num_heads,temp_num_levels=temp_num_levels,temp_num_points=temp_num_points,device=device)
-  encoder = Encoder(backbone=backbone,bevformerlayer=bevformerlayer,device=device)
+  encoder = Encoder(backbone=backbone,encoderlayer=encoderlayer,device=device)
 
 
   list_leveled_images = [torch.rand(size=(num_cams, batch_size, 3, image_shape[0], image_shape[1])).to(device),
@@ -211,8 +211,35 @@ def test_decoder_layer():
                               code_size=code_size,device=device)
 
   encoder_out = torch.rand(size=(batch_size,query_H*query_W,custom_embed_dims)).to(device)
-  res = decoderlayer(encoder_out)
+  res = decoderlayer(encoder_out,encoder_out)
   print("del",res.shape)
+
+def test_decoder():
+  batch_size = 8
+  full_num_query=400
+  full_dropout=0.1
+  full_embed_dims=256
+  full_num_heads=8
+  full_num_levels=1
+  full_num_points=400
+  query_H=20
+  query_W=20
+  custom_dropout=0.1
+  custom_embed_dims=256
+  custom_num_heads=8
+  custom_num_levels=1
+  custom_num_points=400
+  code_size=10
+
+  decoderlayer = DecoderLayer(full_num_query=full_num_query,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
+                              query_H=query_H,query_W=query_W,custom_dropout=custom_dropout,custom_embed_dims=custom_embed_dims,custom_num_heads=custom_num_heads,custom_num_levels=custom_num_levels,custom_num_points=custom_num_points,\
+                              code_size=code_size,device=device)
+  decoder = Decoder(decoderlayer=decoderlayer,device=device)
+
+  encoder_out = torch.rand(size=(batch_size,query_H*query_W,custom_embed_dims)).to(device)
+
+  res = decoder(encoder_out)
+  print("dec",res.shape)
 
 
 
@@ -224,3 +251,4 @@ test_custom_attention()
 test_bev_former_layer()
 test_encoder()
 test_decoder_layer()
+test_decoder()

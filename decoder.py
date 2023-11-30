@@ -6,20 +6,80 @@ from einops import rearrange, einsum
 from attentions import *
 
 class Decoder(nn.Module):
-  def __init__(self,backbone=None,bevformerlayer=None,device=torch.device("cpu")):
+  def __init__(self,decoderlayer=None,device=torch.device("cpu")):
+    """
+    Args:
+      decoderlayer   (nn module):  The decoderlayer module
+        Default: None
+      -----Device-----
+      device (torch.device): The device
+        Default: cpu
+    """
     super().__init__()
-
-
-
+    self.decoderlayer   = decoderlayer
+    self.embed_dims     = decoderlayer.embed_dims
+    self.num_key        = decoderlayer.custom_num_levels * decoderlayer.custom_num_points
+    self.num_value      = decoderlayer.custom_num_levels * decoderlayer.custom_num_points
+    # self.NNP_keyvalue_pos [1(extends to bs), num_levels * num_points, embed_dims]
+    self.NNP_keyvalue_pos = nn.Parameter(torch.ones(1,decoderlayer.custom_num_levels * decoderlayer.custom_num_points,self.embed_dims,device=device)*0.95)
+  def forward(self,encoder_feat):
+    """
+    Args:
+      encoder_feat   (tensor [bs, num_query, emded_dims])
+    Return:
+      decoder_feat   (Tensor [bs, num_query, emded_dims])
+    """
+    bs, num_feat, embed_dims = encoder_feat.shape
+    assert num_feat == self.num_key, "num_feat must equal to num_levels * num_points"
+    assert embed_dims == self.embed_dims, "embed_dims of encoder output must equal to that of decoder input"
+    encoder_feat = encoder_feat + self.NNP_keyvalue_pos
+    return self.decoderlayer(encoder_feat,encoder_feat)
 
 class DecoderLayer(nn.Module):
-  def __init__(self,full_num_query=100,full_dropout=0.1,full_embed_dims=256,full_num_heads=8,full_num_levels=1,full_num_points=4,\
+  def __init__(self,full_dropout=0.1,full_num_query=100,full_embed_dims=256,full_num_heads=8,full_num_levels=1,full_num_points=4,\
                     query_H=200,query_W=200,custom_dropout=0.1,custom_embed_dims=256,custom_num_heads=8,custom_num_levels=1,custom_num_points=4,\
                     code_size=10,device=torch.device("cpu")):
+    """
+    Args:
+      -----Full Attention-----
+      full_dropout     (float): [Full Attention] The drop out rate
+        Default: 0.1 
+      full_num_query   (int):   [Full Attention] The number of query
+        Default: 100 
+      full_embed_dims  (int):   [Full Attention] The embedding dimension of attention
+        Default: 256
+      full_num_heads   (int):   [Full Attention] The number of head
+        Default: 8
+      full_num_levels  (int):   [Full Attention] The number of scale levels in a single sequence
+        Default: 1
+      full_num_points  (int):   [Full Attention] The number of sampling points in a single level
+        Default: 4
+      -----Custom Attention-----
+      query_H               (int):   [Custom Attention] The number of height of query grid
+        Default: 200      
+      query_W               (int):   [Custom Attention] The number of width of query grid
+        Default: 200      
+      custom_dropout        (float): [Custom Attention] The drop out rate
+        Default: 0.1      
+      custom_embed_dims     (int):   [Custom Attention] The embedding dimension of attention
+        Default: 256
+      custom_num_heads      (int):   [Custom Attention] The number of head
+        Default: 8
+      custom_num_levels     (int):   [Custom Attention] The number of scale levels in a single sequence
+        Default: 1
+      custom_num_points     (int):   [Custom Attention] The number of sampling points in a single level
+        Default: 4
+      -----Regression Finer-----
+      code_size             (int):   [Regression Finer] The number of sampling points in a single level
+        Default: 10
+      -----Device-----
+      device  (torch.device): The device
+        Default: cpu
+    """
     super().__init__()
     assert full_embed_dims == custom_embed_dims, "embed_dims for full and custom attention must be the same"
-    self.full_num_query     = full_num_query
     self.full_dropout       = full_dropout
+    self.full_num_query     = full_num_query
     self.full_embed_dims    = full_embed_dims
     self.full_num_heads     = full_num_heads
     self.full_num_levels    = full_num_levels
@@ -52,8 +112,15 @@ class DecoderLayer(nn.Module):
     self.NN_addNorm3       = AddAndNormLayer(None,embed_dims,device=device)
     self.NN_ffn            = nn.Linear(embed_dims,embed_dims,device=device)
     self.NN_regFiner       = RegressionFiner(embed_dims,code_size,device=device)
-  def forward(self,bev_feat):
-    bs, num_query, emded_dims = bev_feat.shape
+  def forward(self,key,value):
+    """
+    Args:
+      key   (tensor [bs, num_key, emded_dims]):   The key
+      value (tensor [bs, num_value, emded_dims]): The value
+    Return:
+      deocerlayer_feat (tensor [])
+    """
+    bs, num_key, emded_dims = key.shape
     # self.query [1,  num_query, embed_dims]
     # ---->query [bs, num_query, embed_dims]
     query = self.query.repeat(bs,1,1)
@@ -65,7 +132,7 @@ class DecoderLayer(nn.Module):
     reference_points_input = reference_points[..., :2].unsqueeze(2)
     fullAttn = self.NN_fullAttn(query=output,key=output,value=output)
     addNorm1 = self.NN_addNorm1(x=fullAttn,y=output)
-    custAttn = self.NN_custAttn(query=addNorm1,key=bev_feat,value=bev_feat,reference_points=reference_points_input,spatial_shapes=self.spatial_shapes)
+    custAttn = self.NN_custAttn(query=addNorm1,key=key,value=value,reference_points=reference_points_input,spatial_shapes=self.spatial_shapes)
     addNorm2 = self.NN_addNorm2(x=custAttn,y=addNorm1)
     ffn      = self.NN_ffn(addNorm2)
     output   = self.NN_addNorm3(x=ffn,y=addNorm2)
@@ -76,6 +143,7 @@ class DecoderLayer(nn.Module):
     new_reference_points = new_reference_points.sigmoid()
     reference_points = new_reference_points
     #--------------------------->
+    # output [bs, num_query, embed_dims]
     return output
   def inverse_sigmoid(self,x,eps=1e-5):
     """Inverse function of sigmoid.
