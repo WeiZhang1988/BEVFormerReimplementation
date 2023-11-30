@@ -6,41 +6,91 @@ from einops import rearrange, einsum
 from attentions import *
 
 class Decoder(nn.Module):
-  def __init__(self,decoderlayer=None,device=torch.device("cpu")):
+  def __init__(self,num_classes=10,point_cloud_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],decoderlayer=None,device=torch.device("cpu")):
     """
     Args:
-      decoderlayer   (nn module):  The decoderlayer module
+      num_classes    (int):           The number of classes to detect
+        Default: 10
+      point_cloud_range (Tensor [6]): The range of point cloud
+        Default: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+      decoderlayer   (nn module):     The decoderlayer module
         Default: None
       -----Device-----
       device (torch.device): The device
         Default: cpu
     """
     super().__init__()
-    self.decoderlayer   = decoderlayer
-    self.embed_dims     = decoderlayer.embed_dims
-    self.num_key        = decoderlayer.custom_num_levels * decoderlayer.custom_num_points
-    self.num_value      = decoderlayer.custom_num_levels * decoderlayer.custom_num_points
+    self.num_classes       = num_classes
+    self.point_cloud_range = point_cloud_range
+    self.decoderlayer      = decoderlayer
+    self.num_layers        = decoderlayer.num_layers
+    self.embed_dims        = decoderlayer.embed_dims
+    self.num_key           = decoderlayer.custom_num_levels * decoderlayer.custom_num_points
+    self.num_value         = decoderlayer.custom_num_levels * decoderlayer.custom_num_points
+    self.code_size         = decoderlayer.code_size
     # self.NNP_keyvalue_pos [1(extends to bs), num_levels * num_points, embed_dims]
-    self.NNP_keyvalue_pos = nn.Parameter(torch.ones(1,decoderlayer.custom_num_levels * decoderlayer.custom_num_points,self.embed_dims,device=device)*0.95)
+    self.NNP_keyvalue_pos  = nn.Parameter(torch.ones(1,decoderlayer.custom_num_levels * decoderlayer.custom_num_points,self.embed_dims,device=device)*0.95)
+    # in original code, for each layer there is an independent regression finer and classifer. For simplification purpose, here shares one finer and classifier for all layers
+    self.NN_regFiner       = RegressionFiner(self.embed_dims,self.code_size,device=device)
+    self.NN_classfier      = Classifier(self.embed_dims,num_classes,device=device)
   def forward(self,encoder_feat):
     """
     Args:
-      encoder_feat   (tensor [bs, num_query, emded_dims])
+      encoder_feat      (tensor [bs, num_query, emded_dims])
     Return:
-      decoder_feat   (Tensor [bs, num_query, emded_dims])
+      stacked_classes   (Tensor [num_layers, bs, num_query, num_classes])
+      stacked_coords    (Tensor [num_layers, bs, num_query, code_size])
     """
     bs, num_feat, embed_dims = encoder_feat.shape
     assert num_feat == self.num_key, "num_feat must equal to num_levels * num_points"
     assert embed_dims == self.embed_dims, "embed_dims of encoder output must equal to that of decoder input"
     encoder_feat = encoder_feat + self.NNP_keyvalue_pos
-    return self.decoderlayer(encoder_feat,encoder_feat)
+    features,reference_points,init_reference_points = self.decoderlayer(encoder_feat,encoder_feat)
+    stacked_classes = []
+    stacked_coords = []
+    for layer_index in range(self.num_layers):
+      if layer_index == 0:
+        reference = init_reference_points
+      else:
+        reference = reference_points[layer_index - 1]
+      reference = self.inverse_sigmoid(reference)
+      output_class = self.NN_classfier(features)
+      tmp = self.NN_regFiner(features)
+      tmp[..., 0:2] += reference[..., 0:2]
+      tmp[..., 0:2] = tmp[..., 0:2].sigmoid()
+      tmp[..., 4:5] += reference[..., 2:3]
+      tmp[..., 4:5] = tmp[..., 4:5].sigmoid()
+      tmp[..., 0:1] = (tmp[..., 0:1] * (self.point_cloud_range[3] - self.point_cloud_range[0]) + self.point_cloud_range[0])
+      tmp[..., 1:2] = (tmp[..., 1:2] * (self.point_cloud_range[4] - self.point_cloud_range[1]) + self.point_cloud_range[1])
+      tmp[..., 4:5] = (tmp[..., 4:5] * (self.point_cloud_range[5] - self.point_cloud_range[2]) + self.point_cloud_range[2])
+      output_coord = tmp
+      stacked_classes.append(output_class)
+      stacked_coords.append(output_coord)
+    # stacked_classes   (Tensor [num_layers, bs, num_query, num_classes])
+    # stacked_coords    (Tensor [num_layers, bs, num_query, code_size])
+    return torch.stack(stacked_classes), torch.stack(stacked_coords)
+  def inverse_sigmoid(self,x,eps=1e-5):
+    """Inverse function of sigmoid.
+    Args:
+      x   (Tensor): The tensor to do the inverse.
+      eps (float):  EPS avoid numerical overflow. Defaults 1e-5.
+    Returns:
+      inversed sigmoid (Tensor)
+    """
+    x = x.clamp(min=0, max=1)
+    x1 = x.clamp(min=eps)
+    x2 = (1 - x).clamp(min=eps)
+    return torch.log(x1 / x2)
 
 class DecoderLayer(nn.Module):
-  def __init__(self,full_dropout=0.1,full_num_query=100,full_embed_dims=256,full_num_heads=8,full_num_levels=1,full_num_points=4,\
+  def __init__(self,num_layers=6,\
+                    full_dropout=0.1,full_num_query=100,full_embed_dims=256,full_num_heads=8,full_num_levels=1,full_num_points=4,\
                     query_H=200,query_W=200,custom_dropout=0.1,custom_embed_dims=256,custom_num_heads=8,custom_num_levels=1,custom_num_points=4,\
                     code_size=10,device=torch.device("cpu")):
     """
     Args:
+      num_layers       (int):   The number of repeatation of the layer
+        Default: 6
       -----Full Attention-----
       full_dropout     (float): [Full Attention] The drop out rate
         Default: 0.1 
@@ -78,6 +128,7 @@ class DecoderLayer(nn.Module):
     """
     super().__init__()
     assert full_embed_dims == custom_embed_dims, "embed_dims for full and custom attention must be the same"
+    self.num_layers         = num_layers
     self.full_dropout       = full_dropout
     self.full_num_query     = full_num_query
     self.full_embed_dims    = full_embed_dims
@@ -111,14 +162,17 @@ class DecoderLayer(nn.Module):
     self.NN_addNorm2       = AddAndNormLayer(None,embed_dims,device=device)
     self.NN_addNorm3       = AddAndNormLayer(None,embed_dims,device=device)
     self.NN_ffn            = nn.Linear(embed_dims,embed_dims,device=device)
+    # in original code, for each layer there is an independent regression finer. For simplification purpose, here shares one finer for all layers
     self.NN_regFiner       = RegressionFiner(embed_dims,code_size,device=device)
   def forward(self,key,value):
     """
     Args:
-      key   (tensor [bs, num_key, emded_dims]):   The key
-      value (tensor [bs, num_value, emded_dims]): The value
+      key   (Tensor [bs, num_key, emded_dims]):   The key
+      value (Tensor [bs, num_value, emded_dims]): The value
     Return:
-      deocerlayer_feat (tensor [])
+      stacked_deocerlayer_feat  (Tensor [num_layers, bs, num_query, embed_dims])
+      stacked_references_points (Tensor [num_layers, bs, num_query, 3])
+      init_references_points    (Tensor             [bs, num_query, 3])
     """
     bs, num_key, emded_dims = key.shape
     # self.query [1,  num_query, embed_dims]
@@ -127,24 +181,40 @@ class DecoderLayer(nn.Module):
     # self.reference_points [1,  num_query, 3]
     # ---->reference_points [bs, num_query, 3]
     reference_points = self.reference_points.repeat(bs,1,1)
+    init_reference_points = reference_points
     output = query
-    #<------------------main body
-    reference_points_input = reference_points[..., :2].unsqueeze(2)
-    fullAttn = self.NN_fullAttn(query=output,key=output,value=output)
-    addNorm1 = self.NN_addNorm1(x=fullAttn,y=output)
-    custAttn = self.NN_custAttn(query=addNorm1,key=key,value=value,reference_points=reference_points_input,spatial_shapes=self.spatial_shapes)
-    addNorm2 = self.NN_addNorm2(x=custAttn,y=addNorm1)
-    ffn      = self.NN_ffn(addNorm2)
-    output   = self.NN_addNorm3(x=ffn,y=addNorm2)
-    tmp = self.NN_regFiner(output)
+    stacked_output = []
+    stacked_reference_points = []
+    #<---------------------------------main body
+    for _ in range(self.num_layers):
+      reference_points_input = reference_points[..., :2].unsqueeze(2)
+      fullAttn               = self.NN_fullAttn(query=output,key=output,value=output)
+      addNorm1               = self.NN_addNorm1(x=fullAttn,y=output)
+      custAttn               = self.NN_custAttn(query=addNorm1,key=key,value=value,reference_points=reference_points_input,spatial_shapes=self.spatial_shapes)
+      addNorm2               = self.NN_addNorm2(x=custAttn,y=addNorm1)
+      ffn                    = self.NN_ffn(addNorm2)
+      output                 = self.NN_addNorm3(x=ffn,y=addNorm2)
+      # [---update reference points
+      tmp                    = self.NN_regFiner(output)
+      new_reference_points = torch.zeros_like(reference_points)
+      new_reference_points[..., :2]  = tmp[..., :2]  + self.inverse_sigmoid(reference_points[..., :2])
+      new_reference_points[..., 2:3] = tmp[..., 4:5] + self.inverse_sigmoid(reference_points[..., 2:3]) 
+      reference_points = new_reference_points.sigmoid()
+      # --------------------------]
+      stacked_output.append(output)
+      stacked_reference_points.append(reference_points)
+    #------------------------------------------>
+    # stacked output           [num_layers, bs, num_query, embed_dims]
+    # stacked reference_points [num_layers, bs, num_query, 3]
+    # init_reference_points                [bs, num_query, 3]
+    return torch.stack(stacked_output), torch.stack(stacked_reference_points), init_reference_points
+  def update_reference_points(self,reference_points,input_tensor,input_NN):
+    tmp = input_NN(input_tensor)
     new_reference_points = torch.zeros_like(reference_points)
     new_reference_points[..., :2]  = tmp[..., :2]  + self.inverse_sigmoid(reference_points[..., :2])
     new_reference_points[..., 2:3] = tmp[..., 4:5] + self.inverse_sigmoid(reference_points[..., 2:3]) 
     new_reference_points = new_reference_points.sigmoid()
-    reference_points = new_reference_points
-    #--------------------------->
-    # output [bs, num_query, embed_dims]
-    return output
+    return new_reference_points
   def inverse_sigmoid(self,x,eps=1e-5):
     """Inverse function of sigmoid.
     Args:
@@ -173,3 +243,19 @@ class RegressionFiner(nn.Module):
     self.reg_branch = nn.Sequential(*reg_branch).to(device)
   def forward(self,x):
     return self.reg_branch(x)
+
+class Classifier(nn.Module):
+  def __init__(self,embed_dims=256,num_classes=10,device=torch.device("cpu")):
+    super().__init__()
+    self.embed_dims   = embed_dims
+    self.num_classes  = num_classes
+    self.device       = device
+    cls_branch = []
+    for _ in range(2):
+      cls_branch.append(nn.Linear(self.embed_dims, self.embed_dims))
+      cls_branch.append(nn.LayerNorm(self.embed_dims))
+      cls_branch.append(nn.ReLU(inplace=True))
+    cls_branch.append(nn.Linear(self.embed_dims, self.num_classes))
+    self.cls_branch = nn.Sequential(*cls_branch)
+  def forward(self,x):
+    return self.cls_branch(x)

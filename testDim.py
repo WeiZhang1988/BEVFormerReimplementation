@@ -8,7 +8,7 @@ from decoder import *
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#device = torch.device("cpu")
+device = torch.device("cpu")
 
 
 def test_backbone():
@@ -99,6 +99,8 @@ def test_custom_attention():
 def test_bev_former_layer():
   batch_size   = 8
 
+  num_layers   = 2
+
   spat_num_cams       = 2
   spat_num_zAnchors   = 4
   spat_dropout        = 0.1
@@ -140,7 +142,7 @@ def test_bev_former_layer():
   temp_reference_points = torch.rand(size=(batch_size,temp_num_query,temp_num_levels,2)).to(device)
   temp_spatial_shapes = torch.Tensor([[10,10],[10,10],[10,10],[10,10]]).to(device)
 
-  enl = EncoderLayer(spat_num_cams=spat_num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
+  enl = EncoderLayer(num_layers=num_layers,spat_num_cams=spat_num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
                        query_H=query_H,query_W=query_W,query_Z=query_Z,query_C=query_C,temp_num_sequences=temp_num_sequences,temp_dropout=temp_dropout,temp_embed_dims=temp_embed_dims,temp_num_heads=temp_num_heads,temp_num_levels=temp_num_levels,temp_num_points=temp_num_points,device=device)
   res = enl(spat_key,spat_value,spat_spatial_shapes=spat_spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans)
   print("enl ",res.shape)
@@ -148,6 +150,7 @@ def test_bev_former_layer():
 def test_encoder():
   # common pars
   batch_size            = 8
+  num_layers            = 2
   num_cams              = 2
   image_shape           = [96,96]
   point_cloud_range     = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
@@ -177,7 +180,7 @@ def test_encoder():
   temp_num_levels     = 1
   temp_num_points     = 4
 
-  encoderlayer = EncoderLayer(image_shape=image_shape, point_cloud_range=point_cloud_range,\
+  encoderlayer = EncoderLayer(num_layers=num_layers,image_shape=image_shape, point_cloud_range=point_cloud_range,\
                        spat_num_cams=num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
                        query_H=query_H,query_W=query_W,query_Z=query_Z,query_C=query_C,temp_num_sequences=temp_num_sequences,temp_dropout=temp_dropout,temp_embed_dims=temp_embed_dims,temp_num_heads=temp_num_heads,temp_num_levels=temp_num_levels,temp_num_points=temp_num_points,device=device)
   encoder = Encoder(backbone=backbone,encoderlayer=encoderlayer,device=device)
@@ -187,10 +190,11 @@ def test_encoder():
                          torch.rand(size=(num_cams, batch_size, 3, int(image_shape[0]/2),     int(image_shape[1]/2))).to(device)]
   spat_lidar2img_trans = torch.rand(size=(batch_size, num_cams, 4, 4)).to(device)
   res = encoder(list_leveled_images,spat_lidar2img_trans)
-  print("enc",res.shape)
+  print("enc ",res.shape)
 
 def test_decoder_layer():
   batch_size = 8
+  num_layers = 2
   full_num_query=400
   full_dropout=0.1
   full_embed_dims=256
@@ -206,16 +210,18 @@ def test_decoder_layer():
   custom_num_points=400
   code_size=10
 
-  decoderlayer = DecoderLayer(full_num_query=full_num_query,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
+  decoderlayer = DecoderLayer(num_layers=num_layers,full_num_query=full_num_query,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
                               query_H=query_H,query_W=query_W,custom_dropout=custom_dropout,custom_embed_dims=custom_embed_dims,custom_num_heads=custom_num_heads,custom_num_levels=custom_num_levels,custom_num_points=custom_num_points,\
                               code_size=code_size,device=device)
 
   encoder_out = torch.rand(size=(batch_size,query_H*query_W,custom_embed_dims)).to(device)
-  res = decoderlayer(encoder_out,encoder_out)
-  print("del",res.shape)
+  feat,refp,init = decoderlayer(encoder_out,encoder_out)
+  print("del  feat ",feat.shape, "refp ",refp.shape, "init ",init.shape)
 
 def test_decoder():
   batch_size = 8
+  num_classes = 2
+  num_layers = 2
   full_num_query=400
   full_dropout=0.1
   full_embed_dims=256
@@ -231,15 +237,15 @@ def test_decoder():
   custom_num_points=400
   code_size=10
 
-  decoderlayer = DecoderLayer(full_num_query=full_num_query,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
+  decoderlayer = DecoderLayer(num_layers=num_layers,full_num_query=full_num_query,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
                               query_H=query_H,query_W=query_W,custom_dropout=custom_dropout,custom_embed_dims=custom_embed_dims,custom_num_heads=custom_num_heads,custom_num_levels=custom_num_levels,custom_num_points=custom_num_points,\
                               code_size=code_size,device=device)
-  decoder = Decoder(decoderlayer=decoderlayer,device=device)
+  decoder = Decoder(num_classes=num_classes,decoderlayer=decoderlayer,device=device)
 
   encoder_out = torch.rand(size=(batch_size,query_H*query_W,custom_embed_dims)).to(device)
 
-  res = decoder(encoder_out)
-  print("dec",res.shape)
+  cls, crd = decoder(encoder_out)
+  print("dec  cls ",cls.shape,"crd ",crd.shape)
 
 
 

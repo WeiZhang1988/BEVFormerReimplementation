@@ -36,7 +36,7 @@ class Encoder(nn.Module):
       list_leveled_images       ([[num_cams, bs, num_channels, height, width],...]):  The list of images. List length is number of levels
       spat_lidar2img_trans      (Tensor [bs, num_cams, 4, 4]):                        The lidar2image transformation matrices
     Return:
-      currentBEV                  (Tensor [bs, num_query, emded_dims])
+      stacked_currentBEV        (Tensor [num_layers, bs, num_query, emded_dims])
     """
     feat_flatten   = []
     spatial_shapes = []
@@ -63,6 +63,8 @@ class Encoder(nn.Module):
 class EncoderLayer(nn.Module):
   """
   Args:
+    num_layers        (int):        The number of repeatation of the layer
+      Default: 6
     image_shape       (list):       The shap of input image
       Default: [372,640]
     point_cloud_range (Tensor [6]): The range of point cloud
@@ -107,11 +109,12 @@ class EncoderLayer(nn.Module):
     device (torch.device): The device
       Default: cpu
   """
-  def __init__(self,image_shape=[372,640], point_cloud_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
+  def __init__(self,num_layers=4,image_shape=[372,640], point_cloud_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],
                     spat_num_cams=6,spat_num_zAnchors=4,spat_dropout=0.1,spat_embed_dims=256,spat_num_heads=8,spat_num_levels=4,spat_num_points=2,\
                     query_H=200,query_W=200,query_Z=8.0,query_C=3,temp_num_sequences=2,temp_dropout=0.1,temp_embed_dims=256,temp_num_heads=8,temp_num_levels=1,temp_num_points=4,device=torch.device("cpu")):
     super().__init__()
     assert spat_embed_dims == temp_embed_dims, "embed_dims for spatial and temperal attention must be the same"
+    self.num_layers           = num_layers
     self.image_shape          = image_shape
     self.point_cloud_range    = point_cloud_range
     self.query_H              = query_H
@@ -159,7 +162,7 @@ class EncoderLayer(nn.Module):
       spat_spatial_shapes         (Tensor [num_levels, 2]):                           [spatial attention]  The spatial shape of features in different levels
       spat_lidar2img_trans        (Tensor [bs, num_cams, 4, 4]):                      [spatial attention]  The lidar2image transformation matrices
     Returns:
-      currentBEV                  (Tensor [bs, num_query, emded_dims])
+      stacked_currentBEV          (Tensor [num_layers, bs, num_query, emded_dims])
     """
     _,bs,_,_ = spat_key.shape
     ref_3d, ref_2d = self.cal_reference_points(self.query_Z,bs)
@@ -169,19 +172,23 @@ class EncoderLayer(nn.Module):
       self.temp_key_hist[i] = key.repeat(bs, 1, 1)
     for i,value in enumerate(self.temp_value_hist):
       self.temp_value_hist[i] = value.repeat(bs,1,1)
+    bev_query = self.query
+    stacked_bev_query = []
     #<------------------main body
-    tempAttn   = self.NN_tempAttn(query=self.query,key_hist=self.temp_key_hist,value_hist=self.temp_value_hist,reference_points=ref_2d,spatial_shapes=self.temp_spatial_shapes)
-    addNorm1   = self.NN_addNorm1(x=tempAttn,y=self.query)
-    spatAttn   = self.NN_spatAttn(query=addNorm1,key=spat_key,value=spat_value,reference_points=ref_3d,spatial_shapes=spat_spatial_shapes,reference_points_cam=spat_reference_points_cam,bev_mask=spat_bev_mask)
-    addNorm2   = self.NN_addNorm2(x=spatAttn,y=addNorm1)
-    ffn        = self.NN_ffn(addNorm2)
-    self.query = self.NN_addNorm3(x=ffn,y=addNorm2)
+    for _ in range(self.num_layers):
+      tempAttn   = self.NN_tempAttn(query=bev_query,key_hist=self.temp_key_hist,value_hist=self.temp_value_hist,reference_points=ref_2d,spatial_shapes=self.temp_spatial_shapes)
+      addNorm1   = self.NN_addNorm1(x=tempAttn,y=bev_query)
+      spatAttn   = self.NN_spatAttn(query=addNorm1,key=spat_key,value=spat_value,reference_points=ref_3d,spatial_shapes=spat_spatial_shapes,reference_points_cam=spat_reference_points_cam,bev_mask=spat_bev_mask)
+      addNorm2   = self.NN_addNorm2(x=spatAttn,y=addNorm1)
+      ffn        = self.NN_ffn(addNorm2)
+      bev_query  = self.NN_addNorm3(x=ffn,y=addNorm2)
+      stacked_bev_query.append(bev_query)
     #--------------------------->
     self.temp_key_hist.pop()
     self.temp_value_hist.pop()
-    self.temp_key_hist.insert(0,self.query)
-    self.temp_value_hist.insert(0,self.query)
-    return self.query
+    self.temp_key_hist.insert(0,bev_query)
+    self.temp_value_hist.insert(0,bev_query)
+    return torch.stack(stacked_bev_query)
   def cal_reference_points(self,depth,bs,dtype=torch.float):
     """
     Args:
