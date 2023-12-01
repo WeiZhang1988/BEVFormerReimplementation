@@ -195,7 +195,7 @@ def test_encoder():
 def test_decoder_layer():
   batch_size = 8
   num_layers = 2
-  full_num_query=400
+  full_num_query=20*20
   full_dropout=0.1
   full_embed_dims=256
   full_num_heads=8
@@ -210,7 +210,7 @@ def test_decoder_layer():
   custom_num_points=400
   code_size=10
 
-  decoderlayer = DecoderLayer(num_layers=num_layers,full_num_query=full_num_query,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
+  decoderlayer = DecoderLayer(num_layers=num_layers,full_num_query=query_H*query_W,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
                               query_H=query_H,query_W=query_W,custom_dropout=custom_dropout,custom_embed_dims=custom_embed_dims,custom_num_heads=custom_num_heads,custom_num_levels=custom_num_levels,custom_num_points=custom_num_points,\
                               code_size=code_size,device=device)
 
@@ -222,7 +222,7 @@ def test_decoder():
   batch_size = 8
   num_classes = 2
   num_layers = 2
-  full_num_query=400
+  full_num_query=20*20
   full_dropout=0.1
   full_embed_dims=256
   full_num_heads=8
@@ -237,7 +237,7 @@ def test_decoder():
   custom_num_points=400
   code_size=10
 
-  decoderlayer = DecoderLayer(num_layers=num_layers,full_num_query=full_num_query,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
+  decoderlayer = DecoderLayer(num_layers=num_layers,full_num_query=query_H*query_W,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
                               query_H=query_H,query_W=query_W,custom_dropout=custom_dropout,custom_embed_dims=custom_embed_dims,custom_num_heads=custom_num_heads,custom_num_levels=custom_num_levels,custom_num_points=custom_num_points,\
                               code_size=code_size,device=device)
   decoder = Decoder(num_classes=num_classes,decoderlayer=decoderlayer,device=device)

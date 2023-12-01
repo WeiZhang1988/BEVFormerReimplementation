@@ -38,8 +38,8 @@ class Decoder(nn.Module):
     Args:
       encoder_feat      (tensor [bs, num_query, emded_dims])
     Return:
-      stacked_classes   (Tensor [num_layers, bs, num_query, num_classes])
-      stacked_coords    (Tensor [num_layers, bs, num_query, code_size])
+      stacked_classes   (Tensor [num_layers, bs, full_num_query, num_classes])
+      stacked_coords    (Tensor [num_layers, bs, full_num_query, code_size])
     """
     bs, num_feat, embed_dims = encoder_feat.shape
     assert num_feat == self.num_key, "num_feat must equal to num_levels * num_points"
@@ -84,7 +84,7 @@ class Decoder(nn.Module):
 
 class DecoderLayer(nn.Module):
   def __init__(self,num_layers=6,\
-                    full_dropout=0.1,full_num_query=100,full_embed_dims=256,full_num_heads=8,full_num_levels=1,full_num_points=4,\
+                    full_dropout=0.1,full_num_query=40000,full_embed_dims=256,full_num_heads=8,full_num_levels=1,full_num_points=4,\
                     query_H=200,query_W=200,custom_dropout=0.1,custom_embed_dims=256,custom_num_heads=8,custom_num_levels=1,custom_num_points=4,\
                     code_size=10,device=torch.device("cpu")):
     """
@@ -95,7 +95,7 @@ class DecoderLayer(nn.Module):
       full_dropout     (float): [Full Attention] The drop out rate
         Default: 0.1 
       full_num_query   (int):   [Full Attention] The number of query
-        Default: 100 
+        Default: 40000 
       full_embed_dims  (int):   [Full Attention] The embedding dimension of attention
         Default: 256
       full_num_heads   (int):   [Full Attention] The number of head
