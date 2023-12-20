@@ -215,7 +215,7 @@ def test_decoder_layer():
                               code_size=code_size,device=device)
 
   encoder_out = torch.rand(size=(batch_size,query_H*query_W,custom_embed_dims)).to(device)
-  feat,refp,init = decoderlayer(encoder_out,encoder_out)
+  feat,refp,init,_ = decoderlayer(encoder_out,encoder_out)
   print("del  feat ",feat.shape, "refp ",refp.shape, "init ",init.shape)
 
 def test_decoder():
@@ -237,15 +237,21 @@ def test_decoder():
   custom_num_points=400
   code_size=10
 
+  anchors=[[10,13, 16,30, 33,23], [10,13, 16,30, 33,23]]
+  num_mask = 32
+  num_protos = 256
+  channels = [custom_embed_dims, custom_embed_dims]
+
   decoderlayer = DecoderLayer(num_layers=num_layers,full_num_query=query_H*query_W,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
                               query_H=query_H,query_W=query_W,custom_dropout=custom_dropout,custom_embed_dims=custom_embed_dims,custom_num_heads=custom_num_heads,custom_num_levels=custom_num_levels,custom_num_points=custom_num_points,\
                               code_size=code_size,device=device)
-  decoder = Decoder(num_classes=num_classes,decoderlayer=decoderlayer,device=device)
+  segmenthead = Segment(nc=num_classes, cs=code_size, anchors=anchors, nm=num_mask, npr=num_protos, ch=channels)
+  decoder = Decoder(num_classes=num_classes,decoderlayer=decoderlayer,segmenthead=segmenthead,device=device)
 
   encoder_out = torch.rand(size=(batch_size,query_H*query_W,custom_embed_dims)).to(device)
 
-  cls, crd = decoder(encoder_out)
-  print("dec  cls ",cls.shape,"crd ",crd.shape)
+  cls, crd, segments, proto = decoder(encoder_out)
+  print("dec  cls segment[0] segment[1] proto",cls.shape,"crd ",crd.shape,segments[0].shape,segments[1].shape,proto.shape)
 
 
 

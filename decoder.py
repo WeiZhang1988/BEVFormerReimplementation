@@ -4,9 +4,10 @@ import torch.nn.functional as F
 from einops import rearrange, einsum
 
 from attentions import *
+from heads import *
 
 class Decoder(nn.Module):
-  def __init__(self,num_classes=10,point_cloud_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],decoderlayer=None,device=torch.device("cpu")):
+  def __init__(self,num_classes=10,point_cloud_range=[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0],decoderlayer=None,segmenthead=None,device=torch.device("cpu")):
     """
     Args:
       num_classes    (int):           The number of classes to detect
@@ -28,6 +29,7 @@ class Decoder(nn.Module):
     self.num_key           = decoderlayer.custom_num_levels * decoderlayer.custom_num_points
     self.num_value         = decoderlayer.custom_num_levels * decoderlayer.custom_num_points
     self.code_size         = decoderlayer.code_size
+    self.segmenthead       = segmenthead
     # self.NNP_keyvalue_pos [1(extends to bs), num_levels * num_points, embed_dims]
     self.NNP_keyvalue_pos  = nn.Parameter(torch.ones(1,decoderlayer.custom_num_levels * decoderlayer.custom_num_points,self.embed_dims,device=device)*0.95)
     # in original code, for each layer there is an independent regression finer and classifer. For simplification purpose, here shares one finer and classifier for all layers
@@ -45,9 +47,10 @@ class Decoder(nn.Module):
     assert num_feat == self.num_key, "num_feat must equal to num_levels * num_points"
     assert embed_dims == self.embed_dims, "embed_dims of encoder output must equal to that of decoder input"
     encoder_feat = encoder_feat + self.NNP_keyvalue_pos
-    features,reference_points,init_reference_points = self.decoderlayer(encoder_feat,encoder_feat)
-    stacked_classes = []
-    stacked_coords = []
+    features,reference_points,init_reference_points,listed_features = self.decoderlayer(encoder_feat,encoder_feat)
+    segments, proto = self.segmenthead(listed_features)
+    listed_classes = []
+    listed_coords = []
     for layer_index in range(self.num_layers):
       if layer_index == 0:
         reference = init_reference_points
@@ -64,11 +67,13 @@ class Decoder(nn.Module):
       tmp[..., 1:2] = (tmp[..., 1:2] * (self.point_cloud_range[4] - self.point_cloud_range[1]) + self.point_cloud_range[1])
       tmp[..., 4:5] = (tmp[..., 4:5] * (self.point_cloud_range[5] - self.point_cloud_range[2]) + self.point_cloud_range[2])
       output_coord = tmp
-      stacked_classes.append(output_class)
-      stacked_coords.append(output_coord)
+      listed_classes.append(output_class)
+      listed_coords.append(output_coord)
     # stacked_classes   (Tensor [num_layers, bs, num_query, num_classes])
     # stacked_coords    (Tensor [num_layers, bs, num_query, code_size])
-    return torch.stack(stacked_classes), torch.stack(stacked_coords)
+    # segments          (list of Tensor [bs, num_anchor, H, W, code_size + num_classes + num_masks])
+    # proto             (Tensor [bs, num_masks, 2*H, 2*W])
+    return torch.stack(listed_classes), torch.stack(listed_coords), segments, proto
   def inverse_sigmoid(self,x,eps=1e-5):
     """Inverse function of sigmoid.
     Args:
@@ -173,6 +178,7 @@ class DecoderLayer(nn.Module):
       stacked_deocerlayer_feat  (Tensor [num_layers, bs, num_query, embed_dims])
       stacked_references_points (Tensor [num_layers, bs, num_query, 3])
       init_references_points    (Tensor             [bs, num_query, 3])
+      listed_deocerlayer_feat   (list of Tensor [[bs, embed_dims, H, W], ... ])
     """
     bs, num_key, emded_dims = key.shape
     # self.query [1,  num_query, embed_dims]
@@ -183,8 +189,8 @@ class DecoderLayer(nn.Module):
     reference_points = self.reference_points.repeat(bs,1,1)
     init_reference_points = reference_points
     output = query
-    stacked_output = []
-    stacked_reference_points = []
+    listed_output = []
+    listed_reference_points = []
     #<---------------------------------main body
     for _ in range(self.num_layers):
       reference_points_input = reference_points[..., :2].unsqueeze(2)
@@ -201,13 +207,21 @@ class DecoderLayer(nn.Module):
       new_reference_points[..., 2:3] = tmp[..., 4:5] + self.inverse_sigmoid(reference_points[..., 2:3]) 
       reference_points = new_reference_points.sigmoid()
       # --------------------------]
-      stacked_output.append(output)
-      stacked_reference_points.append(reference_points)
+      listed_output.append(output)
+      listed_reference_points.append(reference_points)
+    stacked_reference_points = torch.stack(listed_reference_points)
+    stacked_output = torch.stack(listed_output)
+    # --------------------------
+    #        [bs, num_query, embed_dims]
+    # -----> [bs, embed_dims, H, W]
+    for i in range(len(listed_output)):
+      listed_output[i] = listed_output[i].view(bs,self.query_H,self.query_W,self.embed_dims).permute(0,3,1,2).contiguous()
     #------------------------------------------>
     # stacked output           [num_layers, bs, num_query, embed_dims]
     # stacked reference_points [num_layers, bs, num_query, 3]
     # init_reference_points                [bs, num_query, 3]
-    return torch.stack(stacked_output), torch.stack(stacked_reference_points), init_reference_points
+    # listed_output            [[bs, num_query, embed_dims], ... ]
+    return stacked_output, stacked_reference_points, init_reference_points, listed_output
   def update_reference_points(self,reference_points,input_tensor,input_NN):
     tmp = input_NN(input_tensor)
     new_reference_points = torch.zeros_like(reference_points)
