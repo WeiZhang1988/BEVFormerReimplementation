@@ -3,6 +3,17 @@ import numpy as np
 import os
 
 class CarlaInstanceSemeantic2CocoLabelConverter:
+  """
+  Args:
+    input_path    (string): The path of input files
+      Default: "./INS/"
+    output_path   (string): The path to output files
+      Default: "./PROCESSED/"
+    to_size       (tuple):  The size to resize to
+      Default: None
+  Notes:
+    Carla instance semantics raw data is BGRA data with R channel representing tags, B and G channels combined representing ID
+  """
   def __init__(self,input_path="./INS/",output_path="./PROCESSED/",to_size=None):
     self.input_path = input_path
     self.output_path = output_path

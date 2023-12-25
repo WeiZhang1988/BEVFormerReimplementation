@@ -5,6 +5,7 @@ from attentions import *
 from backbone import *
 from encoder import *
 from decoder import *
+from utils import *
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
