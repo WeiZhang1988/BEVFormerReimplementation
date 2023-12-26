@@ -6,6 +6,7 @@ from backbone import *
 from encoder import *
 from decoder import *
 from bevformer import *
+from dataset import *
 from utils import *
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
@@ -328,14 +329,21 @@ def test_bevformer():
   print("bev  cls segment[0] segment[1] proto",cls.shape,"crd ",crd.shape,segments[0].shape,segments[1].shape,proto.shape)
 
 
+def test_dims():
+  test_backbone()
+  test_spatial_cross_attention()
+  test_temporal_self_attention()
+  test_custom_attention()
+  test_encoder_layer()
+  test_encoder()
+  test_decoder_layer()
+  test_decoder()
+  test_bevformer()
 
+def test_cache_labels():
+  bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
+  #print(bev_data.cache_labels().items())
 
-test_backbone()
-test_spatial_cross_attention()
-test_temporal_self_attention()
-test_custom_attention()
-test_encoder_layer()
-test_encoder()
-test_decoder_layer()
-test_decoder()
-test_bevformer()
+if __name__ == "__main__":
+  test_cache_labels()
+
