@@ -24,19 +24,20 @@ class CarlaInstanceSemeantic2CocoLabelConverter:
   def convert(self):
     self.process_one_folder(self.input_path, self.output_path, self.resize_to)
   def process_one_folder(self,input_path,output_path,resize_to):
-    dir_list = os.listdir(input_path)
-    for ins in dir_list:
+    file_list = os.listdir(input_path)
+    for ins in file_list:
       body   = ins.split('.')[0]
       input_file_name  = input_path+ins
       output_file_name = output_path+body+'.txt'
       tag_label = self.process_one_image(input_file_name,resize_to)
       with open(output_file_name,'w') as filehandle:
         for listitem in tag_label:
-          filehandle.write((f'{listitem}\n'.replace('[','').replace(']','')))
+          filehandle.write((f'{listitem}\n'.replace('[','').replace(']','').replace(',','')))
   def process_one_image(self,input_file_name,resize_to):
     img = Image.open(input_file_name)
     if resize_to:
-      img = img.resize(resize_to)
+      img = img.resize(resize_to, Image.NEAREST)
+    H, W = img.size
     numpy_array = np.array(img,dtype=np.uint8)
     channel0 = numpy_array[...,0]
     channel1 = numpy_array[...,1]
@@ -58,7 +59,9 @@ class CarlaInstanceSemeantic2CocoLabelConverter:
           indices = np.where(combined_edge==np.uint64(id))
           if len(indices[0])>3:
             assert len(indices[0]) == len(indices[1]), "x y indices must have same length"
-            indices = np.array([indices[0],indices[1]]).flatten('F')
+            indices_x_flt = indices[0].astype(np.float128) / np.float128(H)
+            indices_y_flt = indices[1].astype(np.float128) / np.float128(W)
+            indices = np.array([indices_x_flt,indices_y_flt]).flatten('F')
             tag_list = [tag] + (indices.tolist())
             tag_label.append(tag_list)
     return tag_label

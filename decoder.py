@@ -42,6 +42,8 @@ class Decoder(nn.Module):
     Return:
       stacked_classes   (Tensor [num_layers, bs, full_num_query, num_classes])
       stacked_coords    (Tensor [num_layers, bs, full_num_query, code_size])
+      segments          (list of Tensor [bs, num_anchor, H, W, code_size + num_classes + num_masks])
+      proto             (Tensor [bs, num_masks, 2*H, 2*W])
     """
     bs, num_feat, embed_dims = encoder_feat.shape
     assert num_feat == self.num_key, "num_feat must equal to num_levels * num_points"

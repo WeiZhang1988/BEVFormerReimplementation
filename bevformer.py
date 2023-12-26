@@ -47,6 +47,6 @@ class BEVFormer(nn.Module):
     self.encoder = encoder
     self.decoder = decoder
   def forward(self,inputs):
-    output_cls, output_bbx = self.decoder(self.encoder(inputs.list_leveled_images,inputs.spat_lidar2img_trans))
-    return output_cls[-1], output_bbx[-1]
+    cls, crd, segments, proto = self.decoder(self.encoder(inputs['list_leveled_images'],inputs['spat_lidar2img_trans'])[-1])
+    return cls, crd, segments, proto
 
