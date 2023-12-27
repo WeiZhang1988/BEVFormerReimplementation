@@ -328,6 +328,24 @@ def test_bevformer():
   cls, crd, segments, proto = bevformer(inputs)
   print("bev  cls segment[0] segment[1] proto",cls.shape,"crd ",crd.shape,segments[0].shape,segments[1].shape,proto.shape)
 
+def test_cache_labels():
+  bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
+  print(bev_data.cache_labels().items())
+
+def test_load_image():
+  bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
+  image, trans = bev_data.load_image(0)
+  print("image ",len(image))
+  print("trans", trans.shape)
+  print("image, trans \n", (image, trans))
+
+def test_get_item():
+  bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
+  imgs_out, lidar2img_trans, labels_out = bev_data.__getitem__(0)
+  for im in imgs_out:
+    print("im ",im.shape)
+  print("lidar2img_trans", lidar2img_trans.shape)
+  print("labels_out", labels_out.shape)
 
 def test_dims():
   test_backbone()
@@ -340,10 +358,8 @@ def test_dims():
   test_decoder()
   test_bevformer()
 
-def test_cache_labels():
-  bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
-  #print(bev_data.cache_labels().items())
+
 
 if __name__ == "__main__":
-  test_cache_labels()
+  test_get_item()
 
