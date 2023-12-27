@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import os
+import cv2
 import glob
 import contextlib
 import collections
@@ -8,7 +9,6 @@ from PIL import ExifTags, Image, ImageOps
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from tqdm import tqdm
-
 
 for orientation in ExifTags.TAGS.keys():
   if ExifTags.TAGS[orientation] == 'Orientation':
@@ -73,6 +73,13 @@ def xyxy2xywhn(x, w=640, h=640, clip=False, eps=0.0):
   y[..., 3] = (x[..., 3] - x[..., 1]) / h  # height
   return y
 
+def xyn2xy(x, w=640, h=640):
+  # Convert normalized segments into pixel segments, shape (n,2)
+  y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+  y[..., 0] = w * x[..., 0]  # top left x
+  y[..., 1] = h * x[..., 1]  # top left y
+  return y
+
 def clip_boxes(boxes, shape):
   # Clip boxes (xyxy) to image shape (height, width)
   if isinstance(boxes, torch.Tensor):  # faster individually
@@ -130,13 +137,60 @@ def verify_image_label(args):
     print("exception")
     return [None, None, None, None, None]
 
+def polygon2mask(img_size, polygons, color=1):
+  """
+  Args:
+      img_size (tuple): The image size.
+      polygons (np.ndarray): [N, M], N is the number of polygons,
+          M is the number of points(Be divided by 2).
+  """
+  mask = np.zeros(img_size, dtype=np.uint8)
+  polygons = np.asarray(polygons)
+  polygons = polygons.astype(np.int32)
+  shape = polygons.shape
+  polygons = polygons.reshape(shape[0], -1, 2)
+  cv2.fillPoly(mask, polygons, color=color)
+  return mask
+
+def polygons2masks(img_size, polygons, color):
+  """
+  Args:
+      img_size (tuple): The image size.
+      polygons (list[np.ndarray]): each polygon is [N, M],
+          N is the number of polygons,
+          M is the number of points(Be divided by 2).
+  """
+  masks = []
+  for si in range(len(polygons)):
+    mask = polygon2mask(img_size, [polygons[si].reshape(-1)], color)
+    masks.append(mask)
+  return np.array(masks)
+
+def polygons2masks_overlap(img_size, segments):
+  """Return a (640, 640) overlap mask."""
+  masks = np.zeros((img_size[0], img_size[1]), dtype=np.int32 if len(segments) > 255 else np.uint8)
+  areas = []
+  ms = []
+  for si in range(len(segments)):
+    mask = polygon2mask(img_size,[segments[si].reshape(-1)],color=1,)
+    ms.append(mask)
+    areas.append(mask.sum())
+  areas = np.asarray(areas)
+  index = np.argsort(-areas)
+  ms = np.array(ms)[index]
+  for i in range(len(segments)):
+    mask = ms[i] * (i + 1)
+    masks = masks + mask
+    masks = np.clip(masks, a_min=0, a_max=i + 1)
+  return masks, index
+
 class BEVDataset(torch.utils.data.Dataset):
   """
   suppose file names follow the pattern:
   images: frameID_camID.png
   labels: frameID.txt
   """
-  def __init__(self, img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(6,1,1)), num_levels=2, batch_size=16, num_threads=1):
+  def __init__(self, img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(6,1,1)), num_levels=2, batch_size=16, num_threads=1, overlap=True):
     """
     Args:
       img_dir         (string):  The path to images
@@ -153,11 +207,14 @@ class BEVDataset(torch.utils.data.Dataset):
         Default: 16
       num_threads     (int):     The number of threads
         Default: 1
+      overlap         (bool):    The flag indicating whether to mark overlap
+        Default: True
     """
     super().__init__()
     self.num_levels      = num_levels
     self.lidar2img_trans = lidar2img_trans
     self.num_threads     = num_threads
+    self.overlap         = overlap
     self.img_dir       = img_dir
     self.label_dir     = label_dir
     self.cache_dir     = cache_dir
@@ -169,7 +226,7 @@ class BEVDataset(torch.utils.data.Dataset):
     assert self.labels_txt, f'No labels found'
     assert len(self.images_png) == len(self.labels_txt) * self.lidar2img_trans.shape[0]
     self.im_files, self.label_files = preprocess_images_list_and_labels_list(self.images_png,self.labels_txt)
-    cache_path = cache_dir + '.cache'
+    cache_path = cache_dir + '/.cache'
     try:
       cache, exists = np.load(cache_path, allow_pickle=True).item(), True  # load dict
     except Exception:
@@ -198,11 +255,21 @@ class BEVDataset(torch.utils.data.Dataset):
         if segment:
           self.segments[i] = [segment[idx] for idx, elem in enumerate(j) if elem]
 
+  def __len__(self):
+    assert len(self.images_png) == len(self.labels_txt) * self.lidar2img_trans.shape[0]
+    return len(self.labels_txt)
+
   def __getitem__(self, index):
     index = self.indices[index]
+    masks = []
     # Load image
     imgs, lidar2img_trans, h, w = self.load_image(index)
     labels = self.labels[index].copy()
+    segments = self.segments[index].copy()
+    if len(segments):
+      for i_s in range(len(segments)):
+          segments[i_s] = xyn2xy(
+              x=segments[i_s],w=w,h=h,)
     if labels.size:  # normalized xywh to pixel xyxy format
         labels[:, 1:] = xywhn2xyxy(x=labels[:, 1:], w=w, h=h)
     nl = len(labels)  # number of labels
@@ -210,14 +277,21 @@ class BEVDataset(torch.utils.data.Dataset):
     if nl:
       labels[:, 1:5] = xyxy2xywhn(x=labels[:, 1:5], w=imgs[0].shape[1], h=imgs[0].shape[0], clip=True, eps=1e-5)
       labels_out[:, 1:] = torch.from_numpy(labels)
+      if self.overlap:
+        masks, sorted_idx = polygons2masks_overlap(imgs[0].shape[:2],segments)
+        masks = masks[None]  # (640, 640) -> (1, 640, 640)
+        labels = labels[sorted_idx]
+      else:
+        masks = polygons2masks(imgs[0].shape[:2], segments, color=1)
+    masks_out = (torch.from_numpy(masks) if len(masks) else torch.zeros(1 if self.overlap else nl, imgs[0].shape[0], imgs[0].shape[1]))
+    #stop here. There is problem with the shape of masks
     # Convert
     imgs_out = []
     for img in imgs:
       img = img.transpose((2, 0, 1))  # HWC to CHW
-      img = torch.from_numpy(np.ascontiguousarray(img))
+      img = np.ascontiguousarray(img)
       imgs_out.append(img)
-
-    return imgs_out, lidar2img_trans, labels_out
+    return (torch.from_numpy(np.array(imgs_out)), lidar2img_trans, labels_out, masks_out)
 
   def load_image(self, i):
     # im_files list of image file names of ith frame
@@ -227,7 +301,7 @@ class BEVDataset(torch.utils.data.Dataset):
     lidar2img = self.lidar2img_trans
     return ims, lidar2img, h, w
 
-  def cache_labels(self, path=Path('./data/labels.cache')):
+  def cache_labels(self, path=Path('./data/cache/labels.cache')):
     # Cache dataset labels, check images and read shapes
     x = {}  # dict
     with Pool(self.num_threads) as pool:
@@ -242,4 +316,12 @@ class BEVDataset(torch.utils.data.Dataset):
     except Exception:
       pass
     return x
+
+  @staticmethod
+  def collate_fn(batch):
+    ims, lidar2img_trans, label, masks = zip(*batch)  # transposed
+    for i, lb in enumerate(label):
+      lb[:, 0] = i
+    stacked_ims, stacked_trans, concated_label, stacked_masks = torch.stack(ims, 0), torch.stack(lidar2img_trans,0), torch.cat(label, 0), torch.stack(masks,0)
+    return stacked_ims, stacked_trans, concated_label, stacked_masks
     

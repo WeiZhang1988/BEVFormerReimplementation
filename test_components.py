@@ -1,5 +1,7 @@
 # to just test dimension "assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value" in MultiScaleDeformableAttention3D needs to be commented out
 # in normal use, the assert should ramain
+from tqdm import tqdm
+import os
 
 from attentions import *
 from backbone import *
@@ -7,8 +9,10 @@ from encoder import *
 from decoder import *
 from bevformer import *
 from dataset import *
+from dataloader import *
+from loss import *
 from utils import *
-import os
+
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
@@ -241,14 +245,14 @@ def test_decoder():
   code_size=10
 
   anchors=[[10,13, 16,30, 33,23], [10,13, 16,30, 33,23]]
-  num_mask = 32
+  num_masks = 32
   num_protos = 256
   channels = [custom_embed_dims, custom_embed_dims]
 
   decoderlayer = DecoderLayer(num_layers=num_layers,full_num_query=query_H*query_W,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
                               query_H=query_H,query_W=query_W,custom_dropout=custom_dropout,custom_embed_dims=custom_embed_dims,custom_num_heads=custom_num_heads,custom_num_levels=custom_num_levels,custom_num_points=custom_num_points,\
                               code_size=code_size,device=device)
-  segmenthead = Segment(nc=num_classes, cs=code_size, anchors=anchors, nm=num_mask, npr=num_protos, ch=channels)
+  segmenthead = Segment(nc=num_classes, cs=code_size, anchors=anchors, nm=num_masks, npr=num_protos, ch=channels)
   decoder = Decoder(num_classes=num_classes,decoderlayer=decoderlayer,segmenthead=segmenthead,device=device)
 
   encoder_out = torch.rand(size=(batch_size,query_H*query_W,custom_embed_dims)).to(device)
@@ -269,6 +273,7 @@ def test_bevformer():
   num_block_per_stage   = [1, 1, 2, 2]
   num_layer_per_block   = 5
   backbone = BackBone(stage_middle_channels,stage_out_channels,num_block_per_stage,num_layer_per_block,device)
+  #---------------------------------------------------------------------------------------------------------
   # encoderlayer pars
   spat_num_zAnchors   = 4
   spat_dropout        = 0.1
@@ -276,24 +281,21 @@ def test_bevformer():
   spat_num_heads      = 8
   spat_num_levels     = 2
   spat_num_points     = 2
-
   query_H=20
   query_W=20
   query_Z=4
   query_C=3
-
   temp_num_sequences  = 2
   temp_dropout        = 0.1
   temp_embed_dims     = 256
   temp_num_heads      = 8
   temp_num_levels     = 1
   temp_num_points     = 4
-
   encoderlayer = EncoderLayer(num_layers=num_layers,image_shape=image_shape, point_cloud_range=point_cloud_range,\
                        spat_num_cams=num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
                        query_H=query_H,query_W=query_W,query_Z=query_Z,query_C=query_C,temp_num_sequences=temp_num_sequences,temp_dropout=temp_dropout,temp_embed_dims=temp_embed_dims,temp_num_heads=temp_num_heads,temp_num_levels=temp_num_levels,temp_num_points=temp_num_points,device=device)
   encoder = Encoder(backbone=backbone,encoderlayer=encoderlayer,device=device)
-  #--------------------------------------------------------------------------------------
+  #--------------------------------------------------------------------------------------------------------
   num_classes = 2
   num_layers = 2
   full_dropout=0.1
@@ -307,20 +309,18 @@ def test_bevformer():
   custom_num_levels=1
   custom_num_points=400
   code_size=10
-
   anchors=[[10,13, 16,30, 33,23], [10,13, 16,30, 33,23]]
-  num_mask = 32
+  num_masks = 32
   num_protos = 256
   channels = [custom_embed_dims, custom_embed_dims]
-
   decoderlayer = DecoderLayer(num_layers=num_layers,full_num_query=query_H*query_W,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
                               query_H=query_H,query_W=query_W,custom_dropout=custom_dropout,custom_embed_dims=custom_embed_dims,custom_num_heads=custom_num_heads,custom_num_levels=custom_num_levels,custom_num_points=custom_num_points,\
                               code_size=code_size,device=device)
-  segmenthead = Segment(nc=num_classes, cs=code_size, anchors=anchors, nm=num_mask, npr=num_protos, ch=channels)
+  segmenthead = Segment(nc=num_classes, cs=code_size, anchors=anchors, nm=num_masks, npr=num_protos, ch=channels)
   decoder = Decoder(num_classes=num_classes,decoderlayer=decoderlayer,segmenthead=segmenthead,device=device)
-
+  #----------------------------------------------------------------------------------------------------
   bevformer = BEVFormer(encoder=encoder,decoder=decoder,lr=1e-4,device=device)
-
+  #-----------------------------------------------------------------------------------------------------
   list_leveled_images = [torch.rand(size=(num_cams, batch_size, 3, image_shape[0], image_shape[1])).to(device),
                          torch.rand(size=(num_cams, batch_size, 3, int(image_shape[0]/2),     int(image_shape[1]/2))).to(device)]
   spat_lidar2img_trans = torch.rand(size=(batch_size, num_cams, 4, 4)).to(device)
@@ -328,24 +328,116 @@ def test_bevformer():
   cls, crd, segments, proto = bevformer(inputs)
   print("bev  cls segment[0] segment[1] proto",cls.shape,"crd ",crd.shape,segments[0].shape,segments[1].shape,proto.shape)
 
+def test_loss():
+  num_gpu     = torch.cuda.device_count()  # number of CUDA devices
+  num_threads = min([os.cpu_count() // max(num_gpu, 1), batch_size if batch_size > 1 else 0, 8])
+  dataset = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
+  # common pars
+  batch_size            = 8
+  batch_size            = min(batch_size, len(dataset))
+  num_layers            = 2
+  num_cams              = 2
+  image_shape           = [96,96]
+  point_cloud_range     = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+  # backbone pars
+  stage_middle_channels = [64, 80, 96, 112]
+  stage_out_channels    = [128, 256, 384, 512]
+  num_block_per_stage   = [1, 1, 2, 2]
+  num_layer_per_block   = 5
+  backbone = BackBone(stage_middle_channels,stage_out_channels,num_block_per_stage,num_layer_per_block,device)
+  #------------------------------------------------------------------------------------------------------------
+  # encoderlayer pars
+  spat_num_zAnchors   = 4
+  spat_dropout        = 0.1
+  spat_embed_dims     = 256
+  spat_num_heads      = 8
+  spat_num_levels     = 2
+  spat_num_points     = 2
+  query_H=20
+  query_W=20
+  query_Z=4
+  query_C=3
+  temp_num_sequences  = 2
+  temp_dropout        = 0.1
+  temp_embed_dims     = 256
+  temp_num_heads      = 8
+  temp_num_levels     = 1
+  temp_num_points     = 4
+  encoderlayer = EncoderLayer(num_layers=num_layers,image_shape=image_shape, point_cloud_range=point_cloud_range,\
+                       spat_num_cams=num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
+                       query_H=query_H,query_W=query_W,query_Z=query_Z,query_C=query_C,temp_num_sequences=temp_num_sequences,temp_dropout=temp_dropout,temp_embed_dims=temp_embed_dims,temp_num_heads=temp_num_heads,temp_num_levels=temp_num_levels,temp_num_points=temp_num_points,device=device)
+  encoder = Encoder(backbone=backbone,encoderlayer=encoderlayer,device=device)
+  #------------------------------------------------------------------------------------------------------------
+  num_classes = 2
+  num_layers = 2
+  full_dropout=0.1
+  full_embed_dims=256
+  full_num_heads=8
+  full_num_levels=1
+  full_num_points=400
+  custom_dropout=0.1
+  custom_embed_dims=256
+  custom_num_heads=8
+  custom_num_levels=1
+  custom_num_points=400
+  code_size=10
+  anchors=[[10,13, 16,30, 33,23], [10,13, 16,30, 33,23]]
+  num_masks = 32
+  num_protos = 256
+  channels = [custom_embed_dims, custom_embed_dims]
+  decoderlayer = DecoderLayer(num_layers=num_layers,full_num_query=query_H*query_W,full_dropout=full_dropout,full_embed_dims=full_embed_dims,full_num_heads=full_num_heads,full_num_levels=full_num_levels,full_num_points=full_num_points,\
+                              query_H=query_H,query_W=query_W,custom_dropout=custom_dropout,custom_embed_dims=custom_embed_dims,custom_num_heads=custom_num_heads,custom_num_levels=custom_num_levels,custom_num_points=custom_num_points,\
+                              code_size=code_size,device=device)
+  segmenthead = Segment(nc=num_classes, cs=code_size, anchors=anchors, nm=num_masks, npr=num_protos, ch=channels)
+  decoder = Decoder(num_classes=num_classes,decoderlayer=decoderlayer,segmenthead=segmenthead,device=device)
+  #------------------------------------------------------------------------------------------------------------
+  bevformer = BEVFormer(encoder=encoder,decoder=decoder,lr=1e-4,device=device)
+  #------------------------------------------------------------------------------------------------------------
+  generator = torch.Generator()
+  generator.manual_seed(6148914691236517205 - 1)
+  loader = InfiniteDataLoader(dataset=dataset,batch_size=batch_size,num_workers=num_threads,pin_memory=True,collate_fn=BEVDataset.collate_fn,shuffle=True,drop_last=False,)
+  bevloss = BEVLoss(anchors=anchors,anchor_t=anchor_t,num_classes=num_classes,num_layers=num_layers,num_masks=num_masks,eps=eps,weight_box_loss=weight_box_loss,weight_obj_loss=weight_obj_loss,weight_cls_loss=weight_cls_loss, device=device)
+
+  # loop = tqdm(loader, leave=True)
+  # for batch_idx, (imgs_outs, lidar2img_transes, labels_outs) in enumerate(loop)
+  #   loss, loss_items = compute_loss(segments, proto, targets.to(device), masks=masks.to(device).float())
+  #   print("loss ",loss)
+  #   print("loss_items ",loss_items)
+  # # print("decoder", decoder.modules)
+  # print("dec  cls segment[0] segment[1] proto",cls.shape,"crd ",crd.shape,segments[0].shape,segments[1].shape,proto.shape)
+
+
+
 def test_cache_labels():
   bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
   print(bev_data.cache_labels().items())
 
 def test_load_image():
   bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
-  image, trans = bev_data.load_image(0)
+  image, trans, h, w = bev_data.load_image(0)
   print("image ",len(image))
   print("trans", trans.shape)
-  print("image, trans \n", (image, trans))
+  print("image, trans, h, w \n", (image, trans, h, w))
 
 def test_get_item():
   bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
-  imgs_out, lidar2img_trans, labels_out = bev_data.__getitem__(0)
+  imgs_out, lidar2img_trans, labels_out, masks_out = bev_data.__getitem__(0)
   for im in imgs_out:
     print("im ",im.shape)
   print("lidar2img_trans", lidar2img_trans.shape)
   print("labels_out", labels_out.shape)
+  print("masks_out", masks_out.shape)
+
+def test_dataloader():
+  dataset = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
+  loader = InfiniteDataLoader(dataset=dataset,batch_size=2,num_workers=2,pin_memory=True,collate_fn=BEVDataset.collate_fn,shuffle=True,drop_last=False,)
+  loop = tqdm(loader, leave=True)
+  for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
+    print("batch id -------------------", batch_idx)
+    print("imgs_outs ",imgs_outs.shape)
+    print("lidar2img_transes", lidar2img_transes.shape)
+    print("labels_outs", labels_outs.shape)
+    print("masks_outs", masks_outs.shape)
 
 def test_dims():
   test_backbone()
@@ -358,8 +450,11 @@ def test_dims():
   test_decoder()
   test_bevformer()
 
-
+def test_dataset():
+  test_cache_labels()
+  test_load_image()
+  test_get_item()
 
 if __name__ == "__main__":
-  test_get_item()
+  test_dataset()
 
