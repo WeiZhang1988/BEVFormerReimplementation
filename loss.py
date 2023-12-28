@@ -65,14 +65,14 @@ def bbox_iou(box1, box2, xywh=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7
   return iou  # IoU
 
 class BEVLoss(nn.Module):
-  def __init__(self,anchors,anchor_t,num_classes,num_layers,num_masks,eps,weight_box_loss,weight_obj_loss,weight_cls_loss, device=torch.device("cpu")):
+  def __init__(self,anchors=[[10,13, 16,30, 33,23], [10,13, 16,30, 33,23]],anchor_t=4,num_classes=23,num_masks=32,eps=1e-5,weight_box_loss=1.0,weight_obj_loss=1.0,weight_cls_loss=1.0, device=torch.device("cpu")):
     super().__init__()
-    self.anchors     = anchors
     self.anchor_t    = anchor_t
-    self.num_anchors = len(anchors)  # number of anchors
-    self.num_classes = num_classes   # number of classes
-    self.num_layers  = num_layers    # number of layers
-    self.num_masks   = num_masks     # number of masks
+    self.num_anchors = len(anchors[0]) // 2    # number of anchors
+    self.num_classes = num_classes             # number of classes
+    self.num_layers  = len(anchors)            # number of layers
+    self.anchors     = torch.tensor(anchors).to(device).float().view(self.num_layers, -1, 2)
+    self.num_masks   = num_masks             # number of masks
     self.weight_box_loss = weight_box_loss
     self.weight_obj_loss = weight_obj_loss
     self.weight_cls_loss = weight_cls_loss
@@ -84,9 +84,8 @@ class BEVLoss(nn.Module):
     self.BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([1.0], device=device))
     # Class label smoothing
     self.cp, self.cn = smooth_BCE(eps=eps)  # positive, negative BCE targets
-    self.balance = {2: [4.0, 4.0]}.get(num_layers, [4.0, 4.0, 4.0, 4.0, 4.0])
+    self.balance = {2: [4.0, 4.0]}.get(self.num_layers, [4.0, 4.0, 4.0, 4.0, 4.0])
     self.gr = 1.0
-
   def forward(self, segments, proto, targets, masks):
     bs, nm, mask_h, mask_w = proto.shape # batch size, number of masks, mask height, mask width
     lcls = torch.zeros(1, device=self.device)
@@ -100,7 +99,7 @@ class BEVLoss(nn.Module):
       tobj = torch.zeros(seg.shape[:4], dtype=seg.dtype, device=self.device)  # target obj
       n = b.shape[0]  # number of targets
       if n:
-        pxy, pwh, _, pcls, pmask = seg[b, a, gj, gi].split((2, 2, 1, self.nc, nm), 1)  # subset of predictions
+        pxy, pwh, _, pcls, pmask = seg[b, a, gj, gi].split((2, 2, 1, self.num_classes, nm), 1)  # subset of predictions
         # Box regression
         pxy = pxy.sigmoid() * 2 - 0.5
         pwh = (pwh.sigmoid() * 2) ** 2 * anchors[i]
@@ -116,7 +115,7 @@ class BEVLoss(nn.Module):
           iou = (1.0 - self.gr) + self.gr * iou
         tobj[b, a, gj, gi] = iou  # iou ratio
         # Classification
-        if self.nc > 1:  # cls loss (only if multiple classes)
+        if self.num_classes > 1:  # cls loss (only if multiple classes)
           t = torch.full_like(pcls, self.cn, device=self.device)  # targets
           t[range(n), tcls[i]] = self.cp
           lcls += self.BCEcls(pcls, t)  # BCE
@@ -149,8 +148,7 @@ class BEVLoss(nn.Module):
 
   def build_targets(self, p, targets):
     # Build targets for compute_loss(), input targets(frame,class,x,y,w,h)
-    print("targets-- ",targets.shape)
-    na, nt = self.na, targets.shape[0]  # number of anchors, targets
+    na, nt = self.num_anchors, targets.shape[0]  # number of anchors, targets
     tcls, tbox, indices, anch, tidxs, xywhn = [], [], [], [], [], []
     gain = torch.ones(8, device=self.device)  # normalized to gridspace gain
     ai = torch.arange(na, device=self.device).float().view(na, 1).repeat(1, nt)  # same as .repeat_interleave(nt)
@@ -175,7 +173,7 @@ class BEVLoss(nn.Module):
         # [1, 1], [1, -1], [-1, 1], [-1, -1],  # jk,jm,lk,lm
       ],
       device=self.device).float() * g  # offsets
-    for i in range(self.nl):
+    for i in range(self.num_layers):
       anchors, shape = self.anchors[i], p[i].shape
       gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
       # Match targets to anchors
@@ -183,7 +181,7 @@ class BEVLoss(nn.Module):
       if nt:
         # Matches
         r = t[..., 4:6] / anchors[:, None]  # wh ratio
-        j = torch.max(r, 1 / r).max(2)[0] < self.hyp['anchor_t']  # compare
+        j = torch.max(r, 1 / r).max(2)[0] < self.anchor_t  # compare
         # j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n)=wh_iou(anchors(3,2), gwh(n,2))
         t = t[j]  # filter
         # Offsets

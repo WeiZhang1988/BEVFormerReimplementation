@@ -101,7 +101,7 @@ def segments2boxes(segments):
 
 def verify_image_label(args):
   # Verify one (6images-label) pair
-  segments = []  # number (missing, found, empty, corrupt), message, segments
+  segments = [] 
   im_files, lb_file = args
   try:
     # verify images
@@ -190,7 +190,7 @@ class BEVDataset(torch.utils.data.Dataset):
   images: frameID_camID.png
   labels: frameID.txt
   """
-  def __init__(self, img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(6,1,1)), num_levels=2, batch_size=16, num_threads=1, overlap=True):
+  def __init__(self, img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(6,1,1)), num_levels=2, batch_size=16, num_threads=1, bev_size=(640,640), overlap=False):
     """
     Args:
       img_dir         (string):  The path to images
@@ -207,6 +207,8 @@ class BEVDataset(torch.utils.data.Dataset):
         Default: 16
       num_threads     (int):     The number of threads
         Default: 1
+      bev_size        (tuple of int): The size of bev in pixel
+        Default: (640, 640)
       overlap         (bool):    The flag indicating whether to mark overlap
         Default: True
     """
@@ -214,6 +216,7 @@ class BEVDataset(torch.utils.data.Dataset):
     self.num_levels      = num_levels
     self.lidar2img_trans = lidar2img_trans
     self.num_threads     = num_threads
+    self.bev_size        = bev_size
     self.overlap         = overlap
     self.img_dir       = img_dir
     self.label_dir     = label_dir
@@ -275,15 +278,15 @@ class BEVDataset(torch.utils.data.Dataset):
     nl = len(labels)  # number of labels
     labels_out = torch.zeros((nl, 6))
     if nl:
-      labels[:, 1:5] = xyxy2xywhn(x=labels[:, 1:5], w=imgs[0].shape[1], h=imgs[0].shape[0], clip=True, eps=1e-5)
+      labels[:, 1:5] = xyxy2xywhn(x=labels[:, 1:5], w=self.bev_size[1], h=self.bev_size[0], clip=True, eps=1e-5)
       labels_out[:, 1:] = torch.from_numpy(labels)
       if self.overlap:
-        masks, sorted_idx = polygons2masks_overlap(imgs[0].shape[:2],segments)
+        masks, sorted_idx = polygons2masks_overlap(self.bev_size,segments)
         masks = masks[None]  # (640, 640) -> (1, 640, 640)
         labels = labels[sorted_idx]
       else:
-        masks = polygons2masks(imgs[0].shape[:2], segments, color=1)
-    masks_out = (torch.from_numpy(masks) if len(masks) else torch.zeros(1 if self.overlap else nl, imgs[0].shape[0], imgs[0].shape[1]))
+        masks = polygons2masks(self.bev_size, segments, color=1)
+    masks_out = (torch.from_numpy(masks) if len(masks) else torch.zeros(1 if self.overlap else nl, self.bev_size[0], self.bev_size[1]))
     #stop here. There is problem with the shape of masks
     # Convert
     imgs_out = []
@@ -322,6 +325,6 @@ class BEVDataset(torch.utils.data.Dataset):
     ims, lidar2img_trans, label, masks = zip(*batch)  # transposed
     for i, lb in enumerate(label):
       lb[:, 0] = i
-    stacked_ims, stacked_trans, concated_label, stacked_masks = torch.stack(ims, 0), torch.stack(lidar2img_trans,0), torch.cat(label, 0), torch.stack(masks,0)
-    return stacked_ims, stacked_trans, concated_label, stacked_masks
+    stacked_ims, stacked_trans, concated_label, concated_masks = torch.stack(ims, 0), torch.stack(lidar2img_trans,0), torch.cat(label, 0), torch.cat(masks,0)
+    return stacked_ims, stacked_trans, concated_label, concated_masks
     

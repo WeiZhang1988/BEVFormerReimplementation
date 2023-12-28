@@ -329,16 +329,14 @@ def test_bevformer():
   print("bev  cls segment[0] segment[1] proto",cls.shape,"crd ",crd.shape,segments[0].shape,segments[1].shape,proto.shape)
 
 def test_loss():
-  num_gpu     = torch.cuda.device_count()  # number of CUDA devices
-  num_threads = min([os.cpu_count() // max(num_gpu, 1), batch_size if batch_size > 1 else 0, 8])
-  dataset = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
   # common pars
-  batch_size            = 8
-  batch_size            = min(batch_size, len(dataset))
+  batch_size            = 2
   num_layers            = 2
   num_cams              = 2
   image_shape           = [96,96]
   point_cloud_range     = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+  num_gpu     = torch.cuda.device_count()  # number of CUDA devices
+  num_threads = min([os.cpu_count() // max(num_gpu, 1), batch_size if batch_size > 1 else 0, 8])
   # backbone pars
   stage_middle_channels = [64, 80, 96, 112]
   stage_out_channels    = [128, 256, 384, 512]
@@ -368,7 +366,7 @@ def test_loss():
                        query_H=query_H,query_W=query_W,query_Z=query_Z,query_C=query_C,temp_num_sequences=temp_num_sequences,temp_dropout=temp_dropout,temp_embed_dims=temp_embed_dims,temp_num_heads=temp_num_heads,temp_num_levels=temp_num_levels,temp_num_points=temp_num_points,device=device)
   encoder = Encoder(backbone=backbone,encoderlayer=encoderlayer,device=device)
   #------------------------------------------------------------------------------------------------------------
-  num_classes = 2
+  num_classes = 23
   num_layers = 2
   full_dropout=0.1
   full_embed_dims=256
@@ -380,7 +378,7 @@ def test_loss():
   custom_num_heads=8
   custom_num_levels=1
   custom_num_points=400
-  code_size=10
+  code_size=5
   anchors=[[10,13, 16,30, 33,23], [10,13, 16,30, 33,23]]
   num_masks = 32
   num_protos = 256
@@ -393,34 +391,44 @@ def test_loss():
   #------------------------------------------------------------------------------------------------------------
   bevformer = BEVFormer(encoder=encoder,decoder=decoder,lr=1e-4,device=device)
   #------------------------------------------------------------------------------------------------------------
+  anchor_t = 4
+  eps = 1e-5
+  weight_box_loss = 1.0
+  weight_obj_loss = 1.0
+  weight_cls_loss = 1.0
   generator = torch.Generator()
   generator.manual_seed(6148914691236517205 - 1)
+  dataset = BEVDataset(img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)), num_levels=2, batch_size=batch_size, num_threads=num_threads, bev_size=(640,640), overlap=False)
   loader = InfiniteDataLoader(dataset=dataset,batch_size=batch_size,num_workers=num_threads,pin_memory=True,collate_fn=BEVDataset.collate_fn,shuffle=True,drop_last=False,)
-  bevloss = BEVLoss(anchors=anchors,anchor_t=anchor_t,num_classes=num_classes,num_layers=num_layers,num_masks=num_masks,eps=eps,weight_box_loss=weight_box_loss,weight_obj_loss=weight_obj_loss,weight_cls_loss=weight_cls_loss, device=device)
+  bevloss = BEVLoss(anchors=anchors,anchor_t=anchor_t,num_classes=num_classes,num_masks=num_masks,eps=eps,weight_box_loss=weight_box_loss,weight_obj_loss=weight_obj_loss,weight_cls_loss=weight_cls_loss, device=device)
+  #------------------------------------------------------------------------------------------------------------
+  list_leveled_images = [torch.rand(size=(num_cams, batch_size, 3, image_shape[0], image_shape[1])).to(device),
+                         torch.rand(size=(num_cams, batch_size, 3, int(image_shape[0]/2),     int(image_shape[1]/2))).to(device)]
+  spat_lidar2img_trans = torch.rand(size=(batch_size, num_cams, 4, 4)).to(device)
+  inputs = {'list_leveled_images': list_leveled_images,'spat_lidar2img_trans': spat_lidar2img_trans}
+  cls, crd, segments, proto = bevformer(inputs)
 
-  # loop = tqdm(loader, leave=True)
-  # for batch_idx, (imgs_outs, lidar2img_transes, labels_outs) in enumerate(loop)
-  #   loss, loss_items = compute_loss(segments, proto, targets.to(device), masks=masks.to(device).float())
-  #   print("loss ",loss)
-  #   print("loss_items ",loss_items)
-  # # print("decoder", decoder.modules)
-  # print("dec  cls segment[0] segment[1] proto",cls.shape,"crd ",crd.shape,segments[0].shape,segments[1].shape,proto.shape)
+  loop = tqdm(loader, leave=True)
+  for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
+    loss, loss_items = bevloss(segments, proto, labels_outs.to(device), masks=masks_outs.to(device).float())
+    print("loss ",loss)
+    print("loss_items ",loss_items)
 
 
 
 def test_cache_labels():
-  bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
+  bev_data = BEVDataset(img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)), num_levels=2, batch_size=16, num_threads=1, bev_size=(640,640), overlap=False)
   print(bev_data.cache_labels().items())
 
 def test_load_image():
-  bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
+  bev_data = BEVDataset(img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)), num_levels=2, batch_size=16, num_threads=1, bev_size=(640,640), overlap=False)
   image, trans, h, w = bev_data.load_image(0)
   print("image ",len(image))
   print("trans", trans.shape)
   print("image, trans, h, w \n", (image, trans, h, w))
 
 def test_get_item():
-  bev_data = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
+  bev_data = BEVDataset(img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)), num_levels=2, batch_size=16, num_threads=1, bev_size=(640,640), overlap=False)
   imgs_out, lidar2img_trans, labels_out, masks_out = bev_data.__getitem__(0)
   for im in imgs_out:
     print("im ",im.shape)
@@ -429,15 +437,15 @@ def test_get_item():
   print("masks_out", masks_out.shape)
 
 def test_dataloader():
-  dataset = BEVDataset(lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)))
+  dataset = BEVDataset(img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)), num_levels=2, batch_size=16, num_threads=1, bev_size=(640,640), overlap=False)
   loader = InfiniteDataLoader(dataset=dataset,batch_size=2,num_workers=2,pin_memory=True,collate_fn=BEVDataset.collate_fn,shuffle=True,drop_last=False,)
   loop = tqdm(loader, leave=True)
   for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
     print("batch id -------------------", batch_idx)
     print("imgs_outs ",imgs_outs.shape)
-    print("lidar2img_transes", lidar2img_transes.shape)
-    print("labels_outs", labels_outs.shape)
-    print("masks_outs", masks_outs.shape)
+    print("lidar2img_transes ", lidar2img_transes.shape)
+    print("labels_outs ", labels_outs.shape)
+    print("masks_outs ", masks_outs.shape)
 
 def test_dims():
   test_backbone()
@@ -456,5 +464,5 @@ def test_dataset():
   test_get_item()
 
 if __name__ == "__main__":
-  test_dataset()
+  test_loss()
 

@@ -1,6 +1,17 @@
 from PIL import Image, ImageFilter
 import numpy as np
+import torch
 import os
+
+def save_checkpoint(state, checkpoint='./model/model.pth.tar'):
+  print("--> saving checkpoint")
+  torch.save(state, checkpoint)
+
+
+def load_checkpoint(checkpoint, model, optimizer):
+  print("--> loading checkpoint")
+  model.load_state_dict(checkpoint["state_dict"])
+  optimizer.load_state_dict(checkpoint["optimizer"])
 
 class CarlaInstanceSemeantic2CocoLabelConverter:
   """
