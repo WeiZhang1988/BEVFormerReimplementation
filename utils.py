@@ -17,7 +17,7 @@ class CarlaInstanceSemeantic2CocoLabelConverter:
   """
   Args:
     input_path    (string): The path of input files
-      Default: "./data/instance_sementics/"
+      Default: "./data/instance_semantics/"
     output_path   (string): The path to output files
       Default: "./data/labels/"
     resize_to     (tuple):  The size to resize to
@@ -25,7 +25,7 @@ class CarlaInstanceSemeantic2CocoLabelConverter:
   Notes:
     Carla instance semantics raw data is BGRA data with R channel representing tags, B and G channels combined representing ID
   """
-  def __init__(self,input_path="./data/instance_sementics/",output_path="./data/labels/",resize_to=None):
+  def __init__(self,input_path="./data/instance_semantics/",output_path="./data/labels/",resize_to=None):
     self.input_path = input_path
     self.output_path = output_path
     self.resize_to = resize_to
@@ -78,5 +78,5 @@ class CarlaInstanceSemeantic2CocoLabelConverter:
     return tag_label
 
 if __name__ == "__main__":
-  converter = CarlaInstanceSemeantic2CocoLabelConverter(input_path="./data/instance_sementics/",output_path="./data/labels/",resize_to=(96,96))
+  converter = CarlaInstanceSemeantic2CocoLabelConverter(input_path="./data/instance_semantics/",output_path="./data/labels/",resize_to=(96,96))
   converter.convert()

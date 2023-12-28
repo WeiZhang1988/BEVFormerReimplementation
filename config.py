@@ -5,6 +5,7 @@ import torch
 import torch.optim as optim
 torch.manual_seed(123)
 device        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device        = torch.device("cpu")
 learning_rate = 2e-5
 weight_decay  = 0
 num_epochs    = 300
@@ -46,7 +47,7 @@ backbone_num_layer_per_block   = 5
 #backbone parameters -->
 #<-- encoder layer parameters
 encoder_num_layer           = 2
-encoder_cam_image_shape     = [640,480] 
+encoder_cam_image_shape     = [256,256] 
 encoder_point_cloud_range   = common_point_cloud_range
 encoder_num_cams            = 4 
 encoder_spat_num_zAnchors   = 4
@@ -99,10 +100,10 @@ data_label_dir            = "./data/labels"
 data_cache_dir            = "./data/cache"
 data_lidar2image_trans    = torch.tile(torch.eye(4),(encoder_num_cams,1,1))
 data_num_levels           = common_num_levels
-data_batch_size           = 16
+data_batch_size           = 2
 data_num_gpu              = torch.cuda.device_count()  # number of CUDA devices
 data_num_threads          = min([os.cpu_count() // max(data_num_gpu, 1), data_batch_size if data_batch_size > 1 else 0, 8])
-data_bev_size             = (640,320)
+data_bev_size             = (256,256)
 data_overlap              = False
 data_pin_memory           = True
 data_shuffle              = True
