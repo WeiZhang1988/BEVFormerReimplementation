@@ -104,29 +104,29 @@ def test_custom_attention():
   print("csa ",res.shape)
 
 def test_encoder_layer():
-  batch_size   = 8
+  batch_size   = 2
 
   num_layers   = 2
 
-  spat_num_cams       = 2
+  spat_num_cams       = 4
   spat_num_zAnchors   = 4
   spat_dropout        = 0.1
   spat_embed_dims     = 256
   spat_num_heads      = 8
-  spat_num_levels     = 4
+  spat_num_levels     = 2
   spat_num_points     = 2
 
   query_H=20
   query_W=20
-  query_Z=4
+  query_Z=8
   query_C=3
 
   temp_num_sequences  = 2
   temp_dropout        = 0.1
   temp_embed_dims     = 256
   temp_num_heads      = 8
-  temp_num_levels     = 1
-  temp_num_points     = 4
+  temp_num_levels     = 2
+  temp_num_points     = 2
 
   spat_num_key        = 32
   spat_num_value      = 32
@@ -143,7 +143,7 @@ def test_encoder_layer():
   temp_value = torch.rand(size=(batch_size,temp_num_value,temp_embed_dims)).to(device)
 
   spat_reference_points = torch.rand(size=(batch_size,temp_num_query,spat_num_zAnchors,2)).to(device)
-  spat_spatial_shapes = torch.Tensor([[1,2],[2,4],[3,6],[1,4]]).to(device)
+  spat_spatial_shapes = torch.Tensor([[1,16],[2,8]]).to(device)#[1,2],[2,4],[3,6],[1,4]
   spat_lidar2img_trans = torch.rand(size=(batch_size, spat_num_cams, 4, 4)).to(device)
 
   temp_reference_points = torch.rand(size=(batch_size,temp_num_query,temp_num_levels,2)).to(device)
@@ -332,7 +332,7 @@ def test_loss():
   # common pars
   batch_size            = 2
   num_layers            = 2
-  num_cams              = 2
+  num_cams              = 4
   image_shape           = [96,96]
   point_cloud_range     = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
   num_gpu     = torch.cuda.device_count()  # number of CUDA devices
@@ -351,15 +351,15 @@ def test_loss():
   spat_num_heads      = 8
   spat_num_levels     = 2
   spat_num_points     = 2
-  query_H=20
-  query_W=20
-  query_Z=4
+  query_H=100
+  query_W=100
+  query_Z=8
   query_C=3
   temp_num_sequences  = 2
   temp_dropout        = 0.1
   temp_embed_dims     = 256
   temp_num_heads      = 8
-  temp_num_levels     = 1
+  temp_num_levels     = 2
   temp_num_points     = 4
   encoderlayer = EncoderLayer(num_layers=num_layers,image_shape=image_shape, point_cloud_range=point_cloud_range,\
                        spat_num_cams=num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
@@ -464,5 +464,5 @@ def test_dataset():
   test_get_item()
 
 if __name__ == "__main__":
-  test_loss()
+  test_encoder_layer()
 

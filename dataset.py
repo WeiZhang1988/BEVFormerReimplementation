@@ -294,7 +294,7 @@ class BEVDataset(torch.utils.data.Dataset):
       img = img.transpose((2, 0, 1))  # HWC to CHW
       img = np.ascontiguousarray(img)
       imgs_out.append(img)
-    return (torch.from_numpy(np.array(imgs_out)), lidar2img_trans, labels_out, masks_out)
+    return (torch.from_numpy(np.array(imgs_out)).type(torch.float32), lidar2img_trans.type(torch.float32), labels_out.type(torch.float32), masks_out.type(torch.float32))
 
   def load_image(self, i):
     # im_files list of image file names of ith frame

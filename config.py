@@ -31,7 +31,7 @@ import torch
 #<-- common parameters
 common_embed_dims            = 256
 common_point_cloud_range     = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
-common_num_levels            = 2 
+common_num_inputs_levels     = 1 
 common_query_H               = 100
 common_query_W               = 100
 common_num_classes           = 23
@@ -54,17 +54,17 @@ encoder_spat_num_zAnchors   = 4
 encoder_spat_dropout        = 0.1
 encoder_spat_embed_dims     = common_embed_dims
 encoder_spat_num_heads      = 8
-encoder_spat_num_levels     = common_num_levels
+encoder_spat_num_levels     = common_num_inputs_levels
 encoder_spat_num_points     = 2
-encoder_query_H             = 200
-encoder_query_W             = 200
-encoder_query_Z             = 8 # name confusing
+encoder_query_H             = 100
+encoder_query_W             = 100
+encoder_query_Z             = 8 # confusing name
 encoder_query_C             = 3
 encoder_temp_num_sequences  = 2
 encoder_temp_dropout        = 0.1
 encoder_temp_embed_dims     = common_embed_dims
 encoder_temp_num_heads      = 8
-encoder_temp_num_levels     = common_num_levels
+encoder_temp_num_levels     = common_num_inputs_levels
 encoder_temp_num_points     = 2
 #encoder layer parameters -->
 #<-- decoder layer parameters
@@ -75,14 +75,14 @@ decoder_full_dropout        = 0.1
 decoder_full_num_query      = common_query_H * common_query_W
 decoder_full_embed_dims     = common_embed_dims
 decoder_full_num_heads      = 8
-decoder_full_num_levels     = common_num_levels
+decoder_full_num_levels     = common_num_inputs_levels
 decoder_full_num_points     = decoder_full_num_query
 decoder_query_H             = common_query_H
 decoder_query_W             = common_query_W
 decoder_custom_dropout      = 0.1
 decoder_custom_embed_dims   = common_embed_dims
 decoder_custom_num_heads    = 8
-decoder_custom_num_levels   = common_num_levels
+decoder_custom_num_levels   = common_num_inputs_levels
 decoder_custom_num_points   = common_query_H * common_query_W
 decoder_code_size           = common_code_size
 #decoder layer parameters -->
@@ -99,7 +99,7 @@ data_img_dir              = "./data/images"
 data_label_dir            = "./data/labels"
 data_cache_dir            = "./data/cache"
 data_lidar2image_trans    = torch.tile(torch.eye(4),(encoder_num_cams,1,1))
-data_num_levels           = common_num_levels
+data_num_levels           = common_num_inputs_levels
 data_batch_size           = 2
 data_num_gpu              = torch.cuda.device_count()  # number of CUDA devices
 data_num_threads          = min([os.cpu_count() // max(data_num_gpu, 1), data_batch_size if data_batch_size > 1 else 0, 8])

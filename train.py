@@ -23,6 +23,7 @@ def train_fn(train_loader, model, optimizer, loss_fn):
   mean_loss = []
   for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
     imgs_outs.to(config.device), lidar2img_transes.to(config.device), labels_outs.to(config.device), masks_outs.to(config.device)
+    imgs_outs = imgs_outs.permute([1,0,2,3,4]).contiguous()
     model_inputs = {'list_leveled_images': [imgs_outs],'spat_lidar2img_trans': lidar2img_transes}
     cls, crd, segments, proto = model(model_inputs)
     loss, loss_items = loss_fn(segments, proto, labels_outs, masks=masks_outs)
