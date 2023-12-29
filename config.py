@@ -4,7 +4,9 @@ import time
 import torch
 import torch.optim as optim
 torch.manual_seed(123)
+torch.autograd.set_detect_anomaly(True)
 device        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#device        = torch.device("cpu")
 learning_rate = 2e-5
 weight_decay  = 0
 num_epochs    = 300

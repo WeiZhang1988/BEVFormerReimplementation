@@ -17,7 +17,6 @@ from tqdm import tqdm
 import config
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
-torch.autograd.set_detect_anomaly(True)
 
 def train_fn(train_loader, model, optimizer, loss_fn):
   loop = tqdm(train_loader, leave=True)
