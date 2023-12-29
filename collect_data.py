@@ -31,7 +31,7 @@ parser.add_argument('--map',                  default='Town10HD', help='Town Map
 parser.add_argument('--sync',                 default=True, help='Synchronous mode execution')
 parser.add_argument('--sensor-h',             default=2.4, help='Sensor Height')
 # absolute path!!!
-parser.add_argument('--save-path',            default='/home/ubuntu/Documents/Carla_dataset/', help='Synchronous mode execution')
+parser.add_argument('--save-path',            default='/home/ubuntu/Downloads/Carla_dataset/', help='Synchronous mode execution')
 parser.add_argument('--number-of-vehicles', metavar='N',   default=30, help='Number of vehicles (default: 60)')
 parser.add_argument('--number-of-walkers', metavar='W',    default=10, help='Number of walkers (default: 30)')
 parser.add_argument('--res',    metavar='WIDTHxHEIGHT',    default='1280x720', help='window resolution (default: 1280x720)')
@@ -253,21 +253,21 @@ def main(args):
 
                 mkdir_folder(args.save_path)
                 if vis_rgb is None or args.save_path is not None:
-                    filename0 = args.save_path +'rgb/'+str(w_frame)+'_'+'00'+'.png'
+                    filename0 = args.save_path +'images/'+format(w_frame,'05d')+'_'+'00'+'.png'
                     cv2.imwrite(filename0, np.array(rgb_0))
-                    filename1 = args.save_path +'rgb/'+str(w_frame)+'_'+'01'+'.png'
+                    filename1 = args.save_path +'images/'+format(w_frame,'05d')+'_'+'01'+'.png'
                     cv2.imwrite(filename1, np.array(rgb_1))
-                    filename2 = args.save_path +'rgb/'+str(w_frame)+'_'+'02'+'.png'
+                    filename2 = args.save_path +'images/'+format(w_frame,'05d')+'_'+'02'+'.png'
                     cv2.imwrite(filename2, np.array(rgb_2))
-                    filename3 = args.save_path +'rgb/'+str(w_frame)+'_'+'03'+'.png'
+                    filename3 = args.save_path +'images/'+format(w_frame,'05d')+'_'+'03'+'.png'
                     cv2.imwrite(filename3, np.array(rgb_3))
-                    # filename = args.save_path +'lidar/'+str(w_frame)+'.npy'
+                    # filename = args.save_path +'lidar/'+format(w_frame,'05d')+'.npy'
                     # np.save(filename, lidar)
                 if ins_sem is None or args.save_path is not None:
-                    filename = args.save_path +'ins/'+str(w_frame)+'.png'
+                    filename = args.save_path +'instance_semantics/'+format(w_frame,'05d')+'.png'
                     cv2.imwrite(filename, np.array(ins_sem[...,::-1]))
                 #if rgb_sem is None or args.save_path is not None:
-                #    filename = args.save_path +'ins/'+'rgb'+str(w_frame)+'.png'
+                #    filename = args.save_path +'ins/'+'rgb'+format(w_frame,'05d')+'.png'
                 #    cv2.imwrite(filename, np.array(rgb_sem[...,::-1]))
 
             except Empty:
@@ -292,8 +292,12 @@ def main(args):
 
 def mkdir_folder(path):
     for s_type in sensor_type:
-        if not os.path.isdir(os.path.join(path, s_type)):
-            os.makedirs(os.path.join(path, s_type))
+        if s_type == 'rgb':
+            if not os.path.isdir(os.path.join(path, 'images')):
+                os.makedirs(os.path.join(path, 'images'))
+        if s_type == 'ins':
+            if not os.path.isdir(os.path.join(path, 'instance_semantics')):
+                os.makedirs(os.path.join(path, 'instance_semantics'))
     return True
 
 def sensor_callback(sensor_data, sensor_queue, sensor_name):
@@ -304,7 +308,8 @@ def sensor_callback(sensor_data, sensor_queue, sensor_name):
 # modify from world on rail code
 def visualize_data(rgb, lidar, text_args=(cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,255), 1)):
 
-    canvas = np.array(rgb[...,::-1])
+    # canvas = np.array(rgb[...,::-1])
+    canvas = np.array(rgb)
 
     if lidar is not None:
         lidar_viz = lidar_to_bev(lidar).astype(np.uint8)
@@ -329,7 +334,7 @@ def lidar_to_bev(lidar, min_x=-24,max_x=24,min_y=-16,max_y=16, pixels_per_meter=
     hist = np.histogramdd(lidar[..., :2], bins=(xbins, ybins))[0]
     # Clip histogram
     hist[hist > hist_max_per_pixel] = hist_max_per_pixel
-    # Normalize histogram by the maximum number of points in a bin we care about.
+    # Normalize histogram by the maximum number of points in a bin we care rgbabout.
     overhead_splat = hist / hist_max_per_pixel * 255.
     # Return splat in X x Y orientation, with X parallel to car axis, Y perp, both parallel to ground.
     return overhead_splat[::-1,:]
@@ -339,7 +344,7 @@ def _parse_image_cb(image):
     array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
     array = np.reshape(array, (image.height, image.width, 4))
     array = array[:, :, :3]
-    array = array[:, :, ::-1]
+    # array = array[:, :, ::-1]
     return array
 # modify from leaderboard
 def _parse_lidar_cb(lidar_data):

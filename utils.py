@@ -77,6 +77,14 @@ class CarlaInstanceSemeantic2CocoLabelConverter:
             tag_label.append(tag_list)
     return tag_label
 
+def convert_filename_to_fixed_length(input_path="./data/images/"):
+  file_list = os.listdir(input_path)
+  for file in file_list:
+    head = file.split('_')[0]
+    rest = ''.join(file.split('_')[1:])
+    new_name = format(int(head),'05d')+'_'+rest
+    os.rename(file, new_name)
+
 if __name__ == "__main__":
   converter = CarlaInstanceSemeantic2CocoLabelConverter(input_path="./data/instance_semantics/",output_path="./data/labels/",resize_to=(96,96))
   converter.convert()
