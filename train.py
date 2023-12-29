@@ -23,17 +23,16 @@ def train_fn(train_loader, model, optimizer, loss_fn):
   loop = tqdm(train_loader, leave=True)
   mean_loss = []
   for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
-    imgs_outs.to(config.device), lidar2img_transes.to(config.device), labels_outs.to(config.device), masks_outs.to(config.device)
+    imgs_outs, lidar2img_transes, labels_outs, masks_outs = imgs_outs.to(config.device), lidar2img_transes.to(config.device), labels_outs.to(config.device), masks_outs.to(config.device) 
     imgs_outs = imgs_outs.permute([1,0,2,3,4]).contiguous()
     model_inputs = {'list_leveled_images': [imgs_outs],'spat_lidar2img_trans': lidar2img_transes}
     cls, crd, segments, proto = model(model_inputs)
     loss, loss_items = loss_fn(segments, proto, labels_outs, masks=masks_outs)
     mean_loss.append(loss.item())
-    with torch.autograd.detect_anomaly():
-      optimizer.zero_grad()
-      loss.backward(retain_graph=True)
-      optimizer.step()
-      loop.set_postfix(loss=loss.item())
+    optimizer.zero_grad()
+    loss.backward(retain_graph=True)
+    optimizer.step()
+    loop.set_postfix(loss=loss.item())
   avg_loss = sum(mean_loss)/len(mean_loss)
   print(f"trainning mean loss was {avg_loss}")
   return avg_loss
@@ -44,7 +43,7 @@ def eval_fn(eval_loader, model, loss_fn):
   mean_loss = []
   for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
     imgs_outs.to(config.device), lidar2img_transes.to(config.device), labels_outs.to(config.device), masks_outs.to(config.device)
-    cls, crd, segments, proto = model([imgs_outs])
+    cls, crd, segments, proto = model({'list_leveled_images': [imgs_outs],'spat_lidar2img_trans': lidar2img_transes})
     loss, loss_items = loss_fn(segments, proto, labels_outs, masks=masks_outs.float())
     mean_loss.append(loss.item())
     loop.set_postfix(loss=loss.item())

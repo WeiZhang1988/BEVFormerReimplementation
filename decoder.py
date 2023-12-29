@@ -268,10 +268,10 @@ class Classifier(nn.Module):
     self.device       = device
     cls_branch = []
     for _ in range(2):
-      cls_branch.append(nn.Linear(self.embed_dims, self.embed_dims))
-      cls_branch.append(nn.LayerNorm(self.embed_dims))
-      cls_branch.append(nn.ReLU(inplace=False))
-    cls_branch.append(nn.Linear(self.embed_dims, self.num_classes))
-    self.cls_branch = nn.Sequential(*cls_branch)
+      cls_branch.append(nn.Linear(self.embed_dims, self.embed_dims, device=device))
+      cls_branch.append(nn.LayerNorm(self.embed_dims,device=device))
+      cls_branch.append(nn.ReLU(inplace=False).to(device))
+    cls_branch.append(nn.Linear(self.embed_dims, self.num_classes,device=device))
+    self.cls_branch = nn.Sequential(*cls_branch).to(device)
   def forward(self,x):
     return self.cls_branch(x)
