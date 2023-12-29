@@ -32,11 +32,12 @@ import torch
 common_embed_dims            = 256
 common_point_cloud_range     = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
 common_num_inputs_levels     = 1 
-common_query_H               = 100
-common_query_W               = 100
+common_query_H               = 20
+common_query_W               = 20
 common_num_classes           = 23
 common_code_size             = 5
 common_anchors               = [[10,13, 16,30, 33,23], [10,13, 16,30, 33,23]]
+common_num_anchor            = len(common_anchors)
 common_num_masks             = 32
 #common parameters -->
 #<-- backbone parameters
@@ -46,7 +47,7 @@ backbone_num_block_per_stage   = [1, 1, 2, 2]
 backbone_num_layer_per_block   = 5
 #backbone parameters -->
 #<-- encoder layer parameters
-encoder_num_layer           = 2
+encoder_num_layer           = 1
 encoder_cam_image_shape     = [256,256] 
 encoder_point_cloud_range   = common_point_cloud_range
 encoder_num_cams            = 4 
@@ -56,8 +57,8 @@ encoder_spat_embed_dims     = common_embed_dims
 encoder_spat_num_heads      = 8
 encoder_spat_num_levels     = common_num_inputs_levels
 encoder_spat_num_points     = 2
-encoder_query_H             = 100
-encoder_query_W             = 100
+encoder_query_H             = common_query_H
+encoder_query_W             = common_query_W
 encoder_query_Z             = 8 # confusing name
 encoder_query_C             = 3
 encoder_temp_num_sequences  = 2
@@ -70,7 +71,7 @@ encoder_temp_num_points     = 2
 #<-- decoder layer parameters
 decoder_num_classes         = common_num_classes
 decoder_point_cloud_range   = common_point_cloud_range
-decoder_num_layer           = 2
+decoder_num_layer           = common_num_anchor
 decoder_full_dropout        = 0.1
 decoder_full_num_query      = common_query_H * common_query_W
 decoder_full_embed_dims     = common_embed_dims
@@ -92,7 +93,7 @@ seg_code_size   = common_code_size
 seg_anchors     = common_anchors
 seg_num_masks   = common_num_masks
 seg_num_protos  = 256
-seg_channels    = [decoder_custom_embed_dims, decoder_custom_embed_dims]
+seg_channels    = [decoder_custom_embed_dims, decoder_custom_embed_dims] # Note: the lenght of seg_channels must match the common_num_anchor
 #segment head parameters -->
 #<-- dataset and dataloader parameters
 data_img_dir              = "./data/images"

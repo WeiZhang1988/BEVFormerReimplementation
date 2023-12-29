@@ -278,7 +278,7 @@ class BEVDataset(torch.utils.data.Dataset):
     nl = len(labels)  # number of labels
     labels_out = torch.zeros((nl, 6))
     if nl:
-      labels[:, 1:5] = xyxy2xywhn(x=labels[:, 1:5], w=self.bev_size[1], h=self.bev_size[0], clip=True, eps=1e-5)
+      labels[:, 1:5] = xyxy2xywhn(x=labels[:, 1:5], w=self.bev_size[1], h=self.bev_size[0], clip=False, eps=1e-5)
       labels_out[:, 1:] = torch.from_numpy(labels)
       if self.overlap:
         masks, sorted_idx = polygons2masks_overlap(self.bev_size,segments)

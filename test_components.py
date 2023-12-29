@@ -349,17 +349,17 @@ def test_loss():
   spat_dropout        = 0.1
   spat_embed_dims     = 256
   spat_num_heads      = 8
-  spat_num_levels     = 2
+  spat_num_levels     = 1
   spat_num_points     = 2
-  query_H=100
-  query_W=100
+  query_H=20
+  query_W=20
   query_Z=8
   query_C=3
   temp_num_sequences  = 2
   temp_dropout        = 0.1
   temp_embed_dims     = 256
   temp_num_heads      = 8
-  temp_num_levels     = 2
+  temp_num_levels     = 1
   temp_num_points     = 4
   encoderlayer = EncoderLayer(num_layers=num_layers,image_shape=image_shape, point_cloud_range=point_cloud_range,\
                        spat_num_cams=num_cams,spat_num_zAnchors=spat_num_zAnchors,spat_dropout=spat_dropout,spat_embed_dims=spat_embed_dims,spat_num_heads=spat_num_heads,spat_num_levels=spat_num_levels,spat_num_points=spat_num_points,\
@@ -398,18 +398,22 @@ def test_loss():
   weight_cls_loss = 1.0
   generator = torch.Generator()
   generator.manual_seed(6148914691236517205 - 1)
-  dataset = BEVDataset(img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(3,1,1)), num_levels=2, batch_size=batch_size, num_threads=num_threads, bev_size=(640,640), overlap=False)
+  dataset = BEVDataset(img_dir='./data/images', label_dir='./data/labels', cache_dir='./data/cache', lidar2img_trans=torch.tile(torch.eye(4),(4,1,1)), num_levels=2, batch_size=batch_size, num_threads=num_threads, bev_size=(640,640), overlap=False)
   loader = InfiniteDataLoader(dataset=dataset,batch_size=batch_size,num_workers=num_threads,pin_memory=True,collate_fn=BEVDataset.collate_fn,shuffle=True,drop_last=False,)
   bevloss = BEVLoss(anchors=anchors,anchor_t=anchor_t,num_classes=num_classes,num_masks=num_masks,eps=eps,weight_box_loss=weight_box_loss,weight_obj_loss=weight_obj_loss,weight_cls_loss=weight_cls_loss, device=device)
   #------------------------------------------------------------------------------------------------------------
-  list_leveled_images = [torch.rand(size=(num_cams, batch_size, 3, image_shape[0], image_shape[1])).to(device),
-                         torch.rand(size=(num_cams, batch_size, 3, int(image_shape[0]/2),     int(image_shape[1]/2))).to(device)]
+  list_leveled_images = [torch.rand(size=(num_cams, batch_size, 3, image_shape[0], image_shape[1])).to(device)]
+                         #torch.rand(size=(num_cams, batch_size, 3, int(image_shape[0]/2),     int(image_shape[1]/2))).to(device)]
   spat_lidar2img_trans = torch.rand(size=(batch_size, num_cams, 4, 4)).to(device)
   inputs = {'list_leveled_images': list_leveled_images,'spat_lidar2img_trans': spat_lidar2img_trans}
-  cls, crd, segments, proto = bevformer(inputs)
+  #cls, crd, segments, proto = bevformer(inputs)
 
   loop = tqdm(loader, leave=True)
   for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
+    imgs_outs.to(device), lidar2img_transes.to(device), labels_outs.to(device), masks_outs.to(device)
+    imgs_outs = imgs_outs.permute([1,0,2,3,4]).contiguous()
+    model_inputs = {'list_leveled_images': [imgs_outs],'spat_lidar2img_trans': lidar2img_transes}
+    cls, crd, segments, proto = bevformer(model_inputs)
     loss, loss_items = bevloss(segments, proto, labels_outs.to(device), masks=masks_outs.to(device).float())
     print("loss ",loss)
     print("loss_items ",loss_items)
@@ -464,5 +468,5 @@ def test_dataset():
   test_get_item()
 
 if __name__ == "__main__":
-  test_encoder_layer()
+  test_loss()
 

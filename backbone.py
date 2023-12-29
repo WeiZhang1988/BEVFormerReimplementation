@@ -180,7 +180,7 @@ class Conv3x3(nn.Module):
     self.NN_Conv3x3     = nn.Sequential(
                           nn.Conv2d(in_channels,out_channels,kernel_size=3,stride=stride,padding=padding,groups=groups,bias=False),
                           nn.BatchNorm2d(out_channels),
-                          nn.ReLU(inplace=True))
+                          nn.ReLU(inplace=False))
   def forward(self,x):
     return self.NN_Conv3x3(x)
 
@@ -206,6 +206,6 @@ class Conv1x1(nn.Module):
     self.NN_Conv1x1 = nn.Sequential(
                       nn.Conv2d(in_channels,out_channels,kernel_size=1,stride=stride,padding=padding,groups=groups,bias=False),
                       nn.BatchNorm2d(out_channels),
-                      nn.ReLU(inplace=True))
+                      nn.ReLU(inplace=False))
   def forward(self,x):
     return self.NN_Conv1x1(x)

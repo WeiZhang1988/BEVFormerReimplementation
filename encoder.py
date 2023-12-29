@@ -167,16 +167,17 @@ class EncoderLayer(nn.Module):
     _,bs,_,_ = spat_key.shape
     ref_3d, ref_2d = self.cal_reference_points(self.query_Z,bs)
     spat_reference_points_cam, spat_bev_mask = self.sample_points(ref_3d, spat_lidar2img_trans)
-    self.query = self.query.repeat(bs, 1, 1)
+    bev_query = self.query.repeat(bs, 1, 1)
+    temp_key_hist = []
+    temp_value_hist = []
     for i,key in enumerate(self.temp_key_hist):
-      self.temp_key_hist[i] = key.repeat(bs, 1, 1)
+      temp_key_hist.append(key.repeat(bs, 1, 1))
     for i,value in enumerate(self.temp_value_hist):
-      self.temp_value_hist[i] = value.repeat(bs,1,1)
-    bev_query = self.query
+      temp_value_hist.append(value.repeat(bs,1,1))
     stacked_bev_query = []
     #<------------------main body
     for _ in range(self.num_layers):
-      tempAttn   = self.NN_tempAttn(query=bev_query,key_hist=self.temp_key_hist,value_hist=self.temp_value_hist,reference_points=ref_2d,spatial_shapes=self.temp_spatial_shapes)
+      tempAttn   = self.NN_tempAttn(query=bev_query,key_hist=temp_key_hist,value_hist=temp_value_hist,reference_points=ref_2d,spatial_shapes=self.temp_spatial_shapes)
       addNorm1   = self.NN_addNorm1(x=tempAttn,y=bev_query)
       spatAttn   = self.NN_spatAttn(query=addNorm1,key=spat_key,value=spat_value,reference_points=ref_3d,spatial_shapes=spat_spatial_shapes,reference_points_cam=spat_reference_points_cam,bev_mask=spat_bev_mask)
       addNorm2   = self.NN_addNorm2(x=spatAttn,y=addNorm1)
@@ -186,8 +187,8 @@ class EncoderLayer(nn.Module):
     #--------------------------->
     self.temp_key_hist.pop()
     self.temp_value_hist.pop()
-    self.temp_key_hist.insert(0,bev_query)
-    self.temp_value_hist.insert(0,bev_query)
+    self.temp_key_hist.insert(0,torch.mean(bev_query,dim=0,keepdim=True))
+    self.temp_value_hist.insert(0,torch.mean(bev_query,dim=0,keepdim=True))
     return torch.stack(stacked_bev_query)
   def cal_reference_points(self,depth,bs,dtype=torch.float):
     """

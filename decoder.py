@@ -270,7 +270,7 @@ class Classifier(nn.Module):
     for _ in range(2):
       cls_branch.append(nn.Linear(self.embed_dims, self.embed_dims))
       cls_branch.append(nn.LayerNorm(self.embed_dims))
-      cls_branch.append(nn.ReLU(inplace=True))
+      cls_branch.append(nn.ReLU(inplace=False))
     cls_branch.append(nn.Linear(self.embed_dims, self.num_classes))
     self.cls_branch = nn.Sequential(*cls_branch)
   def forward(self,x):

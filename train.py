@@ -17,6 +17,7 @@ from tqdm import tqdm
 import config
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
+torch.autograd.set_detect_anomaly(True)
 
 def train_fn(train_loader, model, optimizer, loss_fn):
   loop = tqdm(train_loader, leave=True)
@@ -28,10 +29,11 @@ def train_fn(train_loader, model, optimizer, loss_fn):
     cls, crd, segments, proto = model(model_inputs)
     loss, loss_items = loss_fn(segments, proto, labels_outs, masks=masks_outs)
     mean_loss.append(loss.item())
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-    loop.set_postfix(loss=loss.item())
+    with torch.autograd.detect_anomaly():
+      optimizer.zero_grad()
+      loss.backward(retain_graph=True)
+      optimizer.step()
+      loop.set_postfix(loss=loss.item())
   avg_loss = sum(mean_loss)/len(mean_loss)
   print(f"trainning mean loss was {avg_loss}")
   return avg_loss
@@ -139,15 +141,16 @@ def main():
                                         shuffle=config.data_shuffle,
                                         drop_last=config.data_drop_last,)
  
-  if os.path.exists(config.checkpoint) and config.load_checkpoint:
-    load_checkpoint(torch.load(config.checkpoint),bevformer,optimizer)
+  # if os.path.exists(config.checkpoint) and config.load_checkpoint:
+  #   load_checkpoint(torch.load(config.checkpoint),bevformer,optimizer)
   
   for epoch in range(config.num_epochs):
+    print(f"train the {epoch}th epoch")
     avg_loss = train_fn(train_dataloader, bevformer, optimizer, bevloss)
-    if avg_loss > 0.9 or epoch % config.save_freq == 0:
-      checkpoint = {"state_dict": bevformer.state_dict(),"optimizer": optimizer.state_dict(),}
-      save_checkpoint(checkpoint, checkpoint=config.checkpoint)
-      time.sleep(3)
+    # if avg_loss > 0.9 or epoch % config.save_freq == 0:
+    #   checkpoint = {"state_dict": bevformer.state_dict(),"optimizer": optimizer.state_dict(),}
+    #   save_checkpoint(checkpoint, checkpoint=config.checkpoint)
+    #   time.sleep(3)
 
 if __name__ == "__main__":
   main()
