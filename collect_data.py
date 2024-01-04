@@ -205,7 +205,7 @@ def main(args):
 		#--------------------------Data collection--------------------------#
         total_tick = 6000
         while total_tick > 0:
-            total_tick -= 1
+            total_tick = total_tick - 1
             # tick the server
             world.tick()
 

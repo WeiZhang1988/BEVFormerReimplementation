@@ -42,11 +42,22 @@ class Algorithm:
 
 
 class BEVFormer(nn.Module):
+  count = 0
   def __init__(self,encoder=None,decoder=None,lr=1e-4,device=torch.device("cpu")):
     super().__init__()
+    BEVFormer.count+=1
     self.encoder = encoder
     self.decoder = decoder
+  def __del__(self):
+    BEVFormer.count-=1	
   def forward(self,inputs):
-    cls, crd, segments, proto = self.decoder(self.encoder(inputs['list_leveled_images'],inputs['spat_lidar2img_trans'])[-1])
+    print(f"bevformer-1 allocated cuda {torch.cuda.memory_allocated()}")
+    tmp_out = self.encoder(inputs['list_leveled_images'],inputs['spat_lidar2img_trans'])
+    print(f"bevformer-2 allocated cuda {torch.cuda.memory_allocated()}")
+    cls, crd, segments, proto = self.decoder(tmp_out[-1])
+    #print(f"-3 allocated cuda {torch.cuda.memory_allocated()}")
+    del tmp_out
+    torch.cuda.empty_cache()
+    #print(f"-4 allocated cuda {torch.cuda.memory_allocated()}")
     return cls, crd, segments, proto
 

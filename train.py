@@ -1,8 +1,11 @@
 import os
+import gc
 import time
 import torch
+import torch.nn as nn
 import torch.optim as optim
 
+from torch.utils.checkpoint import checkpoint
 from utils import load_checkpoint, save_checkpoint
 from backbone import BackBone
 from encoder import EncoderLayer, Encoder
@@ -13,28 +16,53 @@ from dataset import BEVDataset
 from dataloader import InfiniteDataLoader
 from loss import BEVLoss
 from tqdm import tqdm
+from torchsummary import summary
 
 import config
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
+torch.backends.cudnn.enabled = True
+torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.deterministic=True
+torch.cuda.synchronize()
 
-def train_fn(train_loader, model, optimizer, loss_fn):
-  loop = tqdm(train_loader, leave=True)
-  mean_loss = []
-  for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
-    imgs_outs, lidar2img_transes, labels_outs, masks_outs = imgs_outs.to(config.device), lidar2img_transes.to(config.device), labels_outs.to(config.device), masks_outs.to(config.device) 
-    imgs_outs = imgs_outs.permute([1,0,2,3,4]).contiguous()
-    model_inputs = {'list_leveled_images': [imgs_outs],'spat_lidar2img_trans': lidar2img_transes}
-    cls, crd, segments, proto = model(model_inputs)
-    loss, loss_items = loss_fn(segments, proto, labels_outs, masks=masks_outs)
-    mean_loss.append(loss.item())
-    optimizer.zero_grad()
-    loss.backward(retain_graph=True)
-    optimizer.step()
-    loop.set_postfix(loss=loss.item())
-  avg_loss = sum(mean_loss)/len(mean_loss)
-  print(f"trainning mean loss was {avg_loss}")
-  return avg_loss
+from copy import deepcopy
+
+def train_fn(num_epochs, train_loader, model, optimizer, loss_fn, scheduler):
+  optimizer_origin = deepcopy(optimizer)
+  for i_epoch in range(num_epochs):
+    loop = tqdm(train_loader, leave=True)
+    print(f"0 allocated cuda {torch.cuda.memory_allocated()}")
+    for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
+      print(torch.cuda.is_available()) 
+      print(f"<--- {i_epoch} th epoch, {batch_idx} th batch --->")
+      print(f"1 allocated cuda {torch.cuda.memory_allocated()}")
+      imgs_outs_, lidar2img_transes_, labels_outs_, masks_outs_ = imgs_outs.to(config.device), lidar2img_transes.to(config.device), labels_outs.to(config.device), masks_outs.to(config.device)
+      #print(f"2 allocated cuda {torch.cuda.memory_allocated()}")
+      imgs_outs_ = imgs_outs_.permute([1,0,2,3,4]).contiguous().requires_grad_(True)
+      #print(f"3 allocated cuda {torch.cuda.memory_allocated()}")
+      model_inputs_ = {'list_leveled_images': [imgs_outs_],'spat_lidar2img_trans': lidar2img_transes_}
+      print(f"4 allocated cuda {torch.cuda.memory_allocated()}")
+      _, _, segments_, proto_ = model(model_inputs_)
+      print(f"5 allocated cuda {torch.cuda.memory_allocated()}")
+      loss_, loss_items_ = loss_fn(segments_, proto_, labels_outs_, masks=masks_outs_)
+      #print(f"6 allocated cuda {torch.cuda.memory_allocated()}")
+      optimizer.zero_grad(set_to_none=True)
+      #print(f"7 allocated cuda {torch.cuda.memory_allocated()}")
+      loss_.backward(retain_graph = True)
+      #print(f"8 allocated cuda {torch.cuda.memory_allocated()}")
+      optimizer.step()
+      optimizer.zero_grad(set_to_none=True)
+      model.zero_grad(set_to_none=True)
+      #print(f"9 allocated cuda {torch.cuda.memory_allocated()}")
+      loop.set_postfix(loss=loss_.item())
+      #print(f"10 allocated cuda {torch.cuda.memory_allocated()}")
+      del loss_, loss_items_, model_inputs_
+      #print(f"11 allocated cuda {torch.cuda.memory_allocated()}")
+      gc.collect()
+      torch.cuda.empty_cache()
+      print(f"12 allocated cuda {torch.cuda.memory_allocated()}")
+    optimizer = deepcopy(optimizer_origin)
 
 def eval_fn(eval_loader, model, loss_fn):
   model.eval()
@@ -55,6 +83,7 @@ def main():
                       config.backbone_num_block_per_stage,
                       config.backbone_num_layer_per_block,
                       config.device)
+  print("backbone par num", sum(p.numel() for p in backbone.parameters()))
   encoderlayer = EncoderLayer(num_layers=config.encoder_num_layer,
                               image_shape=config.encoder_cam_image_shape, 
                               point_cloud_range=config.encoder_point_cloud_range,
@@ -76,9 +105,11 @@ def main():
                               temp_num_levels=config.encoder_temp_num_levels,
                               temp_num_points=config.encoder_temp_num_points,
                               device=config.device)
+  print("encoderlayer par num", sum(p.numel() for p in encoderlayer.parameters()))
   encoder = Encoder(backbone=backbone,
                     encoderlayer=encoderlayer,
                     device=config.device)
+  print("encoder par num", sum(p.numel() for p in encoder.parameters()))
   decoderlayer = DecoderLayer(num_layers=config.decoder_num_layer,
                               full_dropout=config.decoder_full_dropout,
                               full_num_query=config.decoder_full_num_query,
@@ -95,6 +126,7 @@ def main():
                               custom_num_points=config.decoder_custom_num_points,
                               code_size=config.decoder_code_size,
                               device=config.device)
+  print("decoderlayer par num", sum(p.numel() for p in decoderlayer.parameters()))
   segmenthead = Segment(nc=config.seg_num_classes, 
                         cs=config.seg_code_size, 
                         anchors=config.seg_anchors, 
@@ -102,14 +134,17 @@ def main():
                         npr=config.seg_num_protos, 
                         ch=config.seg_channels, 
                         device=config.device)
+  print("segmenthead par num", sum(p.numel() for p in segmenthead.parameters()))
   decoder = Decoder(num_classes=config.decoder_num_classes,
                     decoderlayer=decoderlayer,
                     segmenthead=segmenthead,
                     device=config.device)
+  print("decoder par num", sum(p.numel() for p in decoder.parameters()))
   bevformer = BEVFormer(encoder=encoder,
                         decoder=decoder,
                         lr=config.learning_rate,
                         device=config.device)
+  print("bevformer par num", sum(p.numel() for p in bevformer.parameters()))
   bevloss = BEVLoss(anchors=config.loss_anchors,
                     anchor_t=config.loss_anchor_t,
                     num_classes=config.loss_num_classes,
@@ -119,6 +154,7 @@ def main():
                     weight_obj_loss=config.loss_weight_obj_loss,
                     weight_cls_loss=config.loss_weight_cls_loss, 
                     device=config.device)
+  del backbone, encoderlayer, encoder, decoderlayer, segmenthead, decoder
   optimizer = optim.Adam(bevformer.parameters(),
                          lr=config.learning_rate,
                          weight_decay=config.weight_decay)
@@ -138,17 +174,18 @@ def main():
                                         collate_fn=BEVDataset.collate_fn,
                                         shuffle=config.data_shuffle,
                                         drop_last=config.data_drop_last,)
- 
+
+  scheduler = scheduler = optim.lr_scheduler.OneCycleLR(optimizer=optimizer, pct_start=0.1, div_factor=1e3, 
+                                    max_lr=1e-3, epochs=config.num_epochs, steps_per_epoch=len(train_dataloader))
+  
   # if os.path.exists(config.checkpoint) and config.load_checkpoint:
   #   load_checkpoint(torch.load(config.checkpoint),bevformer,optimizer)
-  
-  for epoch in range(config.num_epochs):
-    print(f"train the {epoch}th epoch")
-    avg_loss = train_fn(train_dataloader, bevformer, optimizer, bevloss)
+  train_fn(config.num_epochs, train_dataloader, bevformer, optimizer, bevloss, scheduler)
     # if avg_loss > 0.9 or epoch % config.save_freq == 0:
     #   checkpoint = {"state_dict": bevformer.state_dict(),"optimizer": optimizer.state_dict(),}
     #   save_checkpoint(checkpoint, checkpoint=config.checkpoint)
     #   time.sleep(3)
+  
 
 if __name__ == "__main__":
   main()

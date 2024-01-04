@@ -45,14 +45,19 @@ class Decoder(nn.Module):
       segments          (list of Tensor [bs, num_anchor, H, W, code_size + num_classes + num_masks])
       proto             (Tensor [bs, num_masks, 2*H, 2*W])
     """
+    print(f"decoder--1 allocated cuda {torch.cuda.memory_allocated()}")
     bs, num_feat, embed_dims = encoder_feat.shape
     assert num_feat == self.num_key, "num_feat must equal to num_levels * num_points"
     assert embed_dims == self.embed_dims, "embed_dims of encoder output must equal to that of decoder input"
     encoder_feat = encoder_feat + self.NNP_keyvalue_pos
+    print(f"decoder--2 allocated cuda {torch.cuda.memory_allocated()}")
     features,reference_points,init_reference_points,listed_features = self.decoderlayer(encoder_feat,encoder_feat)
+    print(f"decoder--3 allocated cuda {torch.cuda.memory_allocated()}")
     segments, proto = self.segmenthead(listed_features)
+    print(f"decoder--4 allocated cuda {torch.cuda.memory_allocated()}")
     listed_classes = []
     listed_coords = []
+    print(f"decoder--5 allocated cuda {torch.cuda.memory_allocated()}")
     for layer_index in range(self.num_layers):
       if layer_index == 0:
         reference = init_reference_points
@@ -61,9 +66,9 @@ class Decoder(nn.Module):
       reference = self.inverse_sigmoid(reference)
       output_class = self.NN_classfier(features)
       tmp = self.NN_regFiner(features)
-      tmp[..., 0:2] += reference[..., 0:2]
+      tmp[..., 0:2] = tmp[..., 0:2] + reference[..., 0:2]
       tmp[..., 0:2] = tmp[..., 0:2].sigmoid()
-      tmp[..., 4:5] += reference[..., 2:3]
+      tmp[..., 4:5] = tmp[..., 4:5] + reference[..., 2:3]
       tmp[..., 4:5] = tmp[..., 4:5].sigmoid()
       tmp[..., 0:1] = (tmp[..., 0:1] * (self.point_cloud_range[3] - self.point_cloud_range[0]) + self.point_cloud_range[0])
       tmp[..., 1:2] = (tmp[..., 1:2] * (self.point_cloud_range[4] - self.point_cloud_range[1]) + self.point_cloud_range[1])
@@ -75,6 +80,7 @@ class Decoder(nn.Module):
     # stacked_coords    (Tensor [num_layers, bs, num_query, code_size])
     # segments          (list of Tensor [bs, num_anchor, H, W, code_size + num_classes + num_masks])
     # proto             (Tensor [bs, num_masks, 2*H, 2*W])
+    print(f"decoder--6 allocated cuda {torch.cuda.memory_allocated()}")
     return torch.stack(listed_classes), torch.stack(listed_coords), segments, proto
   def inverse_sigmoid(self,x,eps=1e-5):
     """Inverse function of sigmoid.
@@ -182,6 +188,7 @@ class DecoderLayer(nn.Module):
       init_references_points    (Tensor             [bs, num_query, 3])
       listed_deocerlayer_feat   (list of Tensor [[bs, embed_dims, H, W], ... ])
     """
+    print(f"  decoderlayer--1 allocated cuda {torch.cuda.memory_allocated()}")
     bs, num_key, emded_dims = key.shape
     # self.query [1,  num_query, embed_dims]
     # ---->query [bs, num_query, embed_dims]
@@ -194,14 +201,23 @@ class DecoderLayer(nn.Module):
     listed_output = []
     listed_reference_points = []
     #<---------------------------------main body
-    for _ in range(self.num_layers):
+    print(f"  decoderlayer--2 allocated cuda {torch.cuda.memory_allocated()}")
+    for i in range(self.num_layers):
+      print(f"  decoderlayer--{i} th layer 1 allocated cuda {torch.cuda.memory_allocated()}")
       reference_points_input = reference_points[..., :2].unsqueeze(2)
+      print(f"  decoderlayer--{i} th layer 2 allocated cuda {torch.cuda.memory_allocated()}")
       fullAttn               = self.NN_fullAttn(query=output,key=output,value=output)
+      print(f"  decoderlayer--{i} th layer 3 allocated cuda {torch.cuda.memory_allocated()}")
       addNorm1               = self.NN_addNorm1(x=fullAttn,y=output)
+      print(f"  decoderlayer--{i} th layer 4 allocated cuda {torch.cuda.memory_allocated()}")
       custAttn               = self.NN_custAttn(query=addNorm1,key=key,value=value,reference_points=reference_points_input,spatial_shapes=self.spatial_shapes)
+      print(f"  decoderlayer--{i} th layer 5 allocated cuda {torch.cuda.memory_allocated()}")
       addNorm2               = self.NN_addNorm2(x=custAttn,y=addNorm1)
+      print(f"  decoderlayer--{i} th layer 6 allocated cuda {torch.cuda.memory_allocated()}")
       ffn                    = self.NN_ffn(addNorm2)
+      print(f"  decoderlayer--{i} th layer 7 allocated cuda {torch.cuda.memory_allocated()}")
       output                 = self.NN_addNorm3(x=ffn,y=addNorm2)
+      print(f"  decoderlayer--{i} th layer 8 allocated cuda {torch.cuda.memory_allocated()}")
       # [---update reference points
       tmp                    = self.NN_regFiner(output)
       new_reference_points = torch.zeros_like(reference_points)
@@ -213,6 +229,7 @@ class DecoderLayer(nn.Module):
       listed_reference_points.append(reference_points)
     stacked_reference_points = torch.stack(listed_reference_points)
     stacked_output = torch.stack(listed_output)
+    print(f"  decoderlayer--3 allocated cuda {torch.cuda.memory_allocated()}")
     # --------------------------
     #        [bs, num_query, embed_dims]
     # -----> [bs, embed_dims, H, W]
@@ -223,6 +240,7 @@ class DecoderLayer(nn.Module):
     # stacked reference_points [num_layers, bs, num_query, 3]
     # init_reference_points                [bs, num_query, 3]
     # listed_output            [[bs, num_query, embed_dims], ... ]
+    print(f"  decoderlayer--3 allocated cuda {torch.cuda.memory_allocated()}")
     return stacked_output, stacked_reference_points, init_reference_points, listed_output
   def update_reference_points(self,reference_points,input_tensor,input_NN):
     tmp = input_NN(input_tensor)

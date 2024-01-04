@@ -4,13 +4,12 @@ import time
 import torch
 import torch.optim as optim
 torch.manual_seed(123)
-torch.autograd.set_detect_anomaly(True)
 device        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #device        = torch.device("cpu")
-learning_rate = 2e-5
+learning_rate = 2e-3
 weight_decay  = 0
 num_epochs    = 300
-save_freq     = 50 #save every 10 epochs
+save_freq     = 10 #save every 10 epochs
 load_model    = False
 checkpoint    = './model/model.pth.tar'
 #system config >>>>>>>>>>>>

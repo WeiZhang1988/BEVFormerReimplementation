@@ -65,6 +65,7 @@ def bbox_iou(box1, box2, xywh=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7
   return iou  # IoU
 
 class BEVLoss(nn.Module):
+  count = 0
   def __init__(self,anchors=[[10,13, 16,30, 33,23], [10,13, 16,30, 33,23]],anchor_t=4,num_classes=23,num_masks=32,eps=1e-5,weight_box_loss=1.0,weight_obj_loss=1.0,weight_cls_loss=1.0, device=torch.device("cpu")):
     super().__init__()
     self.anchor_t    = anchor_t
@@ -86,6 +87,9 @@ class BEVLoss(nn.Module):
     self.cp, self.cn = smooth_BCE(eps=eps)  # positive, negative BCE targets
     self.balance = {2: [4.0, 4.0]}.get(self.num_layers, [4.0, 4.0, 4.0, 4.0, 4.0])
     self.gr = 1.0
+    BEVLoss.count += 1
+  def __del__(self):
+    BEVLoss.count -= 1
   def forward(self, segments, proto, targets, masks):
     bs, nm, mask_h, mask_w = proto.shape # batch size, number of masks, mask height, mask width
     lcls = torch.zeros(1, device=self.device)
@@ -105,7 +109,7 @@ class BEVLoss(nn.Module):
         pwh = (pwh.sigmoid() * 2) ** 2 * anchors[i]
         pbox = torch.cat((pxy, pwh), 1)  # predicted box
         iou = bbox_iou(pbox, tbox[i], CIoU=True).squeeze()  # iou(prediction, target)
-        lbox += (1.0 - iou).mean()  # iou loss
+        lbox = lbox + (1.0 - iou).mean()  # iou loss
         # Objectness
         iou = iou.detach().clamp(0).type(tobj.dtype)
         if self.sort_obj_iou:
@@ -118,7 +122,7 @@ class BEVLoss(nn.Module):
         if self.num_classes > 1:  # cls loss (only if multiple classes)
           t = torch.full_like(pcls, self.cn, device=self.device)  # targets
           t[range(n), tcls[i]] = self.cp
-          lcls += self.BCEcls(pcls, t)  # BCE
+          lcls = lcls + self.BCEcls(pcls, t)  # BCE
         # Mask regression
         if tuple(masks.shape[-2:]) != (mask_h, mask_w):  # downsample
           masks = F.interpolate(masks[None], (mask_h, mask_w), mode='nearest')[0]
@@ -130,15 +134,16 @@ class BEVLoss(nn.Module):
             mask_gti = torch.where(masks[bi][None] == tidxs[i][j].view(-1, 1, 1), 1.0, 0.0)
           else:
             mask_gti = masks[tidxs[i]][j]
-          lseg += self.single_mask_loss(mask_gti, pmask[j], proto[bi], mxyxy[j], marea[j])
+          lseg = lseg + self.single_mask_loss(mask_gti, pmask[j], proto[bi], mxyxy[j], marea[j])
       obji = self.BCEobj(seg[..., 4], tobj)
-      lobj += obji * self.balance[i]  # obj loss
-    lbox *= self.weight_box_loss
-    lobj *= self.weight_obj_loss
-    lcls *= self.weight_cls_loss
-    lseg *= self.weight_box_loss / bs
+      lobj = lobj + obji * self.balance[i]  # obj loss
+    lbox = lbox * self.weight_box_loss
+    lobj = lobj * self.weight_obj_loss
+    lcls = lcls * self.weight_cls_loss
+    lseg = lseg * self.weight_box_loss / bs
     loss = lbox + lobj + lcls + lseg
-    return loss * bs, torch.cat((lbox, lseg, lobj, lcls)).detach()
+    loss = (loss * bs).requires_grad_(True)
+    return loss, torch.cat((lbox, lseg, lobj, lcls)).detach()
 
   def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
     # Mask loss for one image

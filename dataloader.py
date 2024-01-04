@@ -4,10 +4,14 @@ class InfiniteDataLoader(dataloader.DataLoader):
   """ Dataloader that reuses workers
   Uses same syntax as vanilla DataLoader
   """
+  count = 0
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     object.__setattr__(self, 'batch_sampler', _RepeatSampler(self.batch_sampler))
     self.iterator = super().__iter__()
+    InfiniteDataLoader.count += 1
+  def __del__(self):
+    InfiniteDataLoader.count -= 1
   def __len__(self):
     return len(self.batch_sampler.sampler)
   def __iter__(self):
