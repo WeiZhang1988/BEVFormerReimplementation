@@ -277,5 +277,7 @@ class EncoderLayer(nn.Module):
     # bev_mask [num_zAnchors, bs, num_cams, num_query, 1]
     # -------> [num_cams, bs, num_query, num_zAnchors, 1]
     bev_mask = bev_mask.permute(2, 1, 3, 0, 4).squeeze(-1)
+    print("reference_points_cam requires grad ", reference_points_cam.requires_grad)
+    print("bev_mask requires grad ", bev_mask.requires_grad)
     return reference_points_cam, bev_mask
     
