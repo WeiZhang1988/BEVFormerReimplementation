@@ -143,12 +143,14 @@ class SpatialCrossAttention(nn.Module):
       # ------------------->  [bs * num_cams * num_heads,  1,         num_points * num_zAnchors,   2]
       sampling_grid_key_l_   = sampling_grids[:, :1, :,level].transpose(1, 2).flatten(0, 1).contiguous()
       # sampling_key_l_   [bs * num_cams * num_heads,  head_dims,  1,  num_points * num_zAnchors]
-      sampling_key_l_ = F.grid_sample(key_l_,sampling_grid_key_l_,mode='bilinear',padding_mode='zeros',align_corners=False)
+      with torch.no_grad():
+        sampling_key_l_ = F.grid_sample(key_l_,sampling_grid_key_l_,mode='bilinear',padding_mode='zeros',align_corners=False)
       sampling_key_list.append(sampling_key_l_)
       # sampling_grid_value_l_  [bs * num_cams,              nq,         num_heads,                   num_points * num_zAnchors, 2]
       # --------------------->  [bs * num_cams,              num_heads,  nq,                          num_points * num_zAnchors, 2]
       # --------------------->  [bs * num_cams * num_heads,  nq,         num_points * num_zAnchors,   2]
-      sampling_grid_value_l_ = sampling_grids[:, :, :,level].transpose(1, 2).flatten(0, 1).contiguous()
+      with torch.no_grad():
+        sampling_grid_value_l_ = sampling_grids[:, :, :,level].transpose(1, 2).flatten(0, 1).contiguous()
       # sampling_value_l_ [bs * num_cams * num_heads,  head_dims,  nq,  num_points * num_zAnchors]
       sampling_value_l_ = F.grid_sample(value_l_,sampling_grid_value_l_,mode='bilinear',padding_mode='zeros',align_corners=False)
       sampling_value_list.append(sampling_value_l_)
@@ -311,7 +313,6 @@ class TemporalSelfAttention(nn.Module):
     offset_normalizer = torch.stack([spatial_shapes[..., 1], spatial_shapes[..., 0]], -1)
     # sampling_offsets [bs * num_sequences, num_query, num_heads, num_levels, num_points, 2]
     sampling_offsets = self.NN_sampling_offsets(queries).view(bs * self.num_sequences, num_query, self.num_heads, self.num_levels, self.num_points, self.xy)
-#---
     assert reference_points.shape[1]  == num_query, "second dim of reference_points must equal to num_query"
     assert reference_points.shape[-1] == 2,         "last dim of reference_points must be 2"
     # reference_points  extends to [bs * num_sequences, num_query, 1(to extend to num_heads), num_levels, 1(to extend to num_points), 2]
@@ -360,7 +361,6 @@ class TemporalSelfAttention(nn.Module):
     assert key_sampled.shape[1]    == 1 * self.num_levels * self.num_points,  "number of sampled key corresponding to one query   must match numbers of levels * points * zAnchors"
     assert value_sampled.shape[-1] == self.num_levels * self.num_points,      "number of sampled value corresponding to one query must match numbers of levels * points * zAnchors"
     assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
-  #---
     # q, k [bs * num_sequences, num_query(or num_levels * num_points), num_heads, head_dims]
     q = self.NN_to_Q(queries) 
     k = self.NN_to_K(key_sampled)    

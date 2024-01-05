@@ -26,43 +26,30 @@ torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic=True
 torch.cuda.synchronize()
 
-from copy import deepcopy
-
 def train_fn(num_epochs, train_loader, model, optimizer, loss_fn, scheduler):
-  optimizer_origin = deepcopy(optimizer)
-  for i_epoch in range(num_epochs):
+  avg_loss_pre_epoch = 100.0
+  for epoch in range(num_epochs):
     loop = tqdm(train_loader, leave=True)
-    print(f"0 allocated cuda {torch.cuda.memory_allocated()}")
+    mean_loss = []
     for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
-      print(torch.cuda.is_available()) 
-      print(f"<--- {i_epoch} th epoch, {batch_idx} th batch --->")
-      print(f"1 allocated cuda {torch.cuda.memory_allocated()}")
-      imgs_outs_, lidar2img_transes_, labels_outs_, masks_outs_ = imgs_outs.to(config.device), lidar2img_transes.to(config.device), labels_outs.to(config.device), masks_outs.to(config.device)
-      #print(f"2 allocated cuda {torch.cuda.memory_allocated()}")
-      imgs_outs_ = imgs_outs_.permute([1,0,2,3,4]).contiguous().requires_grad_(True)
-      #print(f"3 allocated cuda {torch.cuda.memory_allocated()}")
-      model_inputs_ = {'list_leveled_images': [imgs_outs_],'spat_lidar2img_trans': lidar2img_transes_}
-      print(f"4 allocated cuda {torch.cuda.memory_allocated()}")
-      _, _, segments_, proto_ = model(model_inputs_)
-      print(f"5 allocated cuda {torch.cuda.memory_allocated()}")
-      loss_, loss_items_ = loss_fn(segments_, proto_, labels_outs_, masks=masks_outs_)
-      #print(f"6 allocated cuda {torch.cuda.memory_allocated()}")
+      imgs_outs, lidar2img_transes, labels_outs, masks_outs = imgs_outs.to(config.device), lidar2img_transes.to(config.device), labels_outs.to(config.device), masks_outs.to(config.device)
+      imgs_outs = imgs_outs.permute([1,0,2,3,4]).contiguous()
+      model_inputs = {'list_leveled_images': [imgs_outs],'spat_lidar2img_trans': lidar2img_transes}
+      _, _, segments_, proto_ = model(model_inputs)
+      loss, loss_items = loss_fn(segments_, proto_, labels_outs, masks=masks_outs)
       optimizer.zero_grad(set_to_none=True)
-      #print(f"7 allocated cuda {torch.cuda.memory_allocated()}")
-      loss_.backward(retain_graph = True)
-      #print(f"8 allocated cuda {torch.cuda.memory_allocated()}")
+      loss.backward(retain_graph = True)
       optimizer.step()
       optimizer.zero_grad(set_to_none=True)
-      model.zero_grad(set_to_none=True)
-      #print(f"9 allocated cuda {torch.cuda.memory_allocated()}")
-      loop.set_postfix(loss=loss_.item())
-      #print(f"10 allocated cuda {torch.cuda.memory_allocated()}")
-      del loss_, loss_items_, model_inputs_
-      #print(f"11 allocated cuda {torch.cuda.memory_allocated()}")
-      gc.collect()
-      torch.cuda.empty_cache()
-      print(f"12 allocated cuda {torch.cuda.memory_allocated()}")
-    optimizer = deepcopy(optimizer_origin)
+      mean_loss.append(loss.item())
+      loop.set_postfix(loss=loss.item())
+    avg_loss = sum(mean_loss)/len(mean_loss)
+    print(f"{epoch}th training epoch average loss: {avg_loss}")
+    if avg_loss < avg_loss_pre_epoch or epoch % config.save_freq == 0:
+      checkpoint = {"state_dict": model.state_dict(),"optimizer": optimizer.state_dict(),}
+      save_checkpoint(checkpoint, checkpoint=config.checkpoint)
+      time.sleep(3)
+    avg_loss_pre_epoch = avg_loss
 
 def eval_fn(eval_loader, model, loss_fn):
   model.eval()
@@ -74,7 +61,7 @@ def eval_fn(eval_loader, model, loss_fn):
     loss, loss_items = loss_fn(segments, proto, labels_outs, masks=masks_outs.float())
     mean_loss.append(loss.item())
     loop.set_postfix(loss=loss.item())
-  print(f"trainning mean loss was {sum(mean_loss)/len(mean_loss)}")
+  print(f"eval mean loss was {sum(mean_loss)/len(mean_loss)}")
   model.train()
 
 def main():
@@ -83,7 +70,6 @@ def main():
                       config.backbone_num_block_per_stage,
                       config.backbone_num_layer_per_block,
                       config.device)
-  print("backbone par num", sum(p.numel() for p in backbone.parameters()))
   encoderlayer = EncoderLayer(num_layers=config.encoder_num_layer,
                               image_shape=config.encoder_cam_image_shape, 
                               point_cloud_range=config.encoder_point_cloud_range,
@@ -105,11 +91,9 @@ def main():
                               temp_num_levels=config.encoder_temp_num_levels,
                               temp_num_points=config.encoder_temp_num_points,
                               device=config.device)
-  print("encoderlayer par num", sum(p.numel() for p in encoderlayer.parameters()))
   encoder = Encoder(backbone=backbone,
                     encoderlayer=encoderlayer,
                     device=config.device)
-  print("encoder par num", sum(p.numel() for p in encoder.parameters()))
   decoderlayer = DecoderLayer(num_layers=config.decoder_num_layer,
                               full_dropout=config.decoder_full_dropout,
                               full_num_query=config.decoder_full_num_query,
@@ -126,7 +110,6 @@ def main():
                               custom_num_points=config.decoder_custom_num_points,
                               code_size=config.decoder_code_size,
                               device=config.device)
-  print("decoderlayer par num", sum(p.numel() for p in decoderlayer.parameters()))
   segmenthead = Segment(nc=config.seg_num_classes, 
                         cs=config.seg_code_size, 
                         anchors=config.seg_anchors, 
@@ -134,17 +117,14 @@ def main():
                         npr=config.seg_num_protos, 
                         ch=config.seg_channels, 
                         device=config.device)
-  print("segmenthead par num", sum(p.numel() for p in segmenthead.parameters()))
   decoder = Decoder(num_classes=config.decoder_num_classes,
                     decoderlayer=decoderlayer,
                     segmenthead=segmenthead,
                     device=config.device)
-  print("decoder par num", sum(p.numel() for p in decoder.parameters()))
   bevformer = BEVFormer(encoder=encoder,
                         decoder=decoder,
                         lr=config.learning_rate,
                         device=config.device)
-  print("bevformer par num", sum(p.numel() for p in bevformer.parameters()))
   bevloss = BEVLoss(anchors=config.loss_anchors,
                     anchor_t=config.loss_anchor_t,
                     num_classes=config.loss_num_classes,
@@ -178,13 +158,9 @@ def main():
   scheduler = scheduler = optim.lr_scheduler.OneCycleLR(optimizer=optimizer, pct_start=0.1, div_factor=1e3, 
                                     max_lr=1e-3, epochs=config.num_epochs, steps_per_epoch=len(train_dataloader))
   
-  # if os.path.exists(config.checkpoint) and config.load_checkpoint:
-  #   load_checkpoint(torch.load(config.checkpoint),bevformer,optimizer)
+  if os.path.exists(config.checkpoint) and config.load_checkpoint:
+    load_checkpoint(torch.load(config.checkpoint),bevformer,optimizer)
   train_fn(config.num_epochs, train_dataloader, bevformer, optimizer, bevloss, scheduler)
-    # if avg_loss > 0.9 or epoch % config.save_freq == 0:
-    #   checkpoint = {"state_dict": bevformer.state_dict(),"optimizer": optimizer.state_dict(),}
-    #   save_checkpoint(checkpoint, checkpoint=config.checkpoint)
-    #   time.sleep(3)
   
 
 if __name__ == "__main__":

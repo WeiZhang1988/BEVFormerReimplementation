@@ -38,39 +38,25 @@ class Encoder(nn.Module):
     Return:
       stacked_currentBEV        (Tensor [num_layers, bs, num_query, emded_dims])
     """
-    #print(f"encoder--1 allocated cuda {torch.cuda.memory_allocated()}")
     feat_flatten   = []
     spatial_shapes = []
     for lvl, images in enumerate(list_leveled_images):
-      #print(f"---- {lvl} th level ----")
-      #print(f"encoder--2 allocated cuda {torch.cuda.memory_allocated()}")
       # feat_embed [bs, num_cams, h, w, embed_dims]
       feat_embed = self.backbone(images).permute(0,1,3,4,2)
-      #print(f"encoder--3 allocated cuda {torch.cuda.memory_allocated()}")
       feat_embed = self.NN_feat_embed(feat_embed)
-      #print(f"encoder--4 allocated cuda {torch.cuda.memory_allocated()}")
       bs, num_cams, h, w, embed_dims = feat_embed.shape
       spatial_shape = (h, w)
       # feat_embed [bs, num_cams, h, w,  embed_dims]
       # ---------> [num_cams, bs, h * w, embed_dims]
       feat_embed = feat_embed.flatten(2,3).permute(1, 0, 2, 3) + self.NNP_cams_embed[:, None, None, :] + self.NNP_level_embed[None, None, lvl:lvl + 1, :]
-      #print(f"encoder--5 allocated cuda {torch.cuda.memory_allocated()}")
       spatial_shapes.append(spatial_shape)
-      #print(f"encoder--6 allocated cuda {torch.cuda.memory_allocated()}")
       feat_flatten.append(feat_embed)
-      #print(f"encoder--7 allocated cuda {torch.cuda.memory_allocated()}")
     # feat_embed [num_cams, bs, h * w, embed_dims]
     # ---------> [num_cams, bs, H * W, embed_dims]
     feat_flatten = torch.cat(feat_flatten, 2).to(self.device)
     # spatial_shapes [l, 2]
-    #print(f"encoder--8 allocated cuda {torch.cuda.memory_allocated()}")
     spatial_shapes = torch.as_tensor(spatial_shapes).to(self.device)
-    #print(f"encoder--9 allocated cuda {torch.cuda.memory_allocated()}")
     bev = self.encoderlayer(feat_flatten,feat_flatten,spat_spatial_shapes=spatial_shapes,spat_lidar2img_trans=spat_lidar2img_trans)
-    #print(f"encoder--10 allocated cuda {torch.cuda.memory_allocated()}")
-    del feat_flatten, spatial_shapes
-    torch.cuda.empty_cache()
-    #print(f"encoder--11 allocated cuda {torch.cuda.memory_allocated()}")
     return bev
 
 
@@ -277,7 +263,5 @@ class EncoderLayer(nn.Module):
     # bev_mask [num_zAnchors, bs, num_cams, num_query, 1]
     # -------> [num_cams, bs, num_query, num_zAnchors, 1]
     bev_mask = bev_mask.permute(2, 1, 3, 0, 4).squeeze(-1)
-    print("reference_points_cam requires grad ", reference_points_cam.requires_grad)
-    print("bev_mask requires grad ", bev_mask.requires_grad)
     return reference_points_cam, bev_mask
     

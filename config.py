@@ -6,11 +6,11 @@ import torch.optim as optim
 torch.manual_seed(123)
 device        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #device        = torch.device("cpu")
-learning_rate = 2e-3
+learning_rate = 2e-5
 weight_decay  = 0
-num_epochs    = 300
-save_freq     = 10 #save every 10 epochs
-load_model    = False
+num_epochs    = 1000
+save_freq     = 50 #save every 50 epochs
+load_model    = True
 checkpoint    = './model/model.pth.tar'
 #system config >>>>>>>>>>>>
 
@@ -99,7 +99,10 @@ seg_channels    = [decoder_custom_embed_dims, decoder_custom_embed_dims] # Note:
 data_img_dir              = "./data/images"
 data_label_dir            = "./data/labels"
 data_cache_dir            = "./data/cache"
-data_lidar2image_trans    = torch.tile(torch.eye(4),(encoder_num_cams,1,1))
+data_lidar2image_trans    = torch.stack([torch.tensor([[1.,0.,0.,0.],[0.,1.,0.,0.],[0.,0.,1.,2.4],[0.,0.,0.,1.]]),
+                                         torch.tensor([[0.,-1.,0.,0.],[1.,0.,0.,0.],[0.,0.,1.,2.4],[0.,0.,0.,1.]]),
+                                         torch.tensor([[-1.,0.,0.,0.],[0.,-1.,0.,0.],[0.,0.,1.,2.4],[0.,0.,0.,1.]]),
+                                         torch.tensor([[0.,1.,0.,0.],[-1.,0.,0.,0.],[0.,0.,1.,2.4],[0.,0.,0.,1.]])],dim=0)
 data_num_levels           = common_num_inputs_levels
 data_batch_size           = 2
 data_num_gpu              = torch.cuda.device_count()  # number of CUDA devices
