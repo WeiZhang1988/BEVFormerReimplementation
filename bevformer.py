@@ -52,6 +52,6 @@ class BEVFormer(nn.Module):
     BEVFormer.count-=1	
   def forward(self,inputs):
     tmp_out = self.encoder(inputs['list_leveled_images'],inputs['spat_lidar2img_trans'])
-    cls, crd, segments, proto = self.decoder(tmp_out[-1])
-    return cls, crd, segments, proto
+    cls, crd, segments, proto, last_layer_features = self.decoder(tmp_out[-1])
+    return cls, crd, segments, proto, last_layer_features
 

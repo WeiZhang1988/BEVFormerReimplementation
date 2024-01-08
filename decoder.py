@@ -38,12 +38,13 @@ class Decoder(nn.Module):
   def forward(self,encoder_feat):
     """
     Args:
-      encoder_feat      (tensor [bs, num_query, emded_dims])
-    Return:
-      stacked_classes   (Tensor [num_layers, bs, full_num_query, num_classes])
-      stacked_coords    (Tensor [num_layers, bs, full_num_query, code_size])
-      segments          (list of Tensor [bs, num_anchor, H, W, code_size + num_classes + num_masks])
-      proto             (Tensor [bs, num_masks, 2*H, 2*W])
+      encoder_feat          (tensor [bs, num_query, emded_dims])
+    Return:   
+      stacked_classes       (Tensor [num_layers, bs, full_num_query, num_classes])
+      stacked_coords        (Tensor [num_layers, bs, full_num_query, code_size])
+      segments              (list of Tensor [bs, num_anchor, H, W, code_size + num_classes + num_masks])
+      proto                 (Tensor [bs, num_masks, 2*H, 2*W])
+      last layer features   (Tensor [bs, embed_dims, H, W])
     """
     bs, num_feat, embed_dims = encoder_feat.shape
     assert num_feat == self.num_key, "num_feat must equal to num_levels * num_points"
@@ -71,11 +72,12 @@ class Decoder(nn.Module):
       output_coord = tmp
       listed_classes.append(output_class)
       listed_coords.append(output_coord)
-    # stacked_classes   (Tensor [num_layers, bs, num_query, num_classes])
-    # stacked_coords    (Tensor [num_layers, bs, num_query, code_size])
-    # segments          (list of Tensor [bs, num_anchor, H, W, code_size + num_classes + num_masks])
-    # proto             (Tensor [bs, num_masks, 2*H, 2*W])
-    return torch.stack(listed_classes), torch.stack(listed_coords), segments, proto
+    # stacked_classes     (Tensor [num_layers, bs, num_query, num_classes])
+    # stacked_coords      (Tensor [num_layers, bs, num_query, code_size])
+    # segments            (list of Tensor [bs, num_anchor, H, W, code_size + num_classes + num_masks])
+    # proto               (Tensor [bs, num_masks, 2*H, 2*W])
+    # last layer features (Tensor [bs, embed_dims, H, W])
+    return torch.stack(listed_classes), torch.stack(listed_coords), segments, proto, listed_features[-1]
   def inverse_sigmoid(self,x,eps=1e-5):
     """Inverse function of sigmoid.
     Args:

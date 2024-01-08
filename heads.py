@@ -152,4 +152,4 @@ class Segment(Detect):
   def forward(self, x):
     p = self.proto(x[-1])
     x = self.detect(self, x)
-    return (x, p) if self.training else (x[0], p) if self.export else (x[0], p, x[1])
+    return (x, p)
