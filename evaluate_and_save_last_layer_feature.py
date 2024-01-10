@@ -137,21 +137,27 @@ torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic=True
 torch.cuda.synchronize()
 
-def evaluate_and_save_last_layer_feature(eval_loader, model, file_path):
+def evaluate_and_save_last_layer_feature(model, lidar2img_transes=data_lidar2image_trans, image_path='./data/images', output_path='./data/last_layer_feature'):
   model.eval()
-  loop = tqdm(eval_loader, leave=False)
-  last_layer_features_dic = {}
-  for batch_idx, (imgs_outs, lidar2img_transes, labels_outs, masks_outs) in enumerate(loop):
-    imgs_outs, lidar2img_transes, labels_outs, masks_outs = imgs_outs.to(device), lidar2img_transes.to(device), labels_outs.to(device), masks_outs.to(device)
-    imgs_outs = imgs_outs.permute([1,0,2,3,4]).contiguous()
-    model_inputs = {'list_leveled_images': [imgs_outs],'spat_lidar2img_trans': lidar2img_transes}
+  lidar2img_transes = torch.unsqueeze(lidar2img_transes,dim=0).to(device)
+  image_list = glob.glob(image_path+'/*')
+  assert image_list, f'No images found'
+  image_dic = {}
+  for image_file in image_list:
+    image = torch.tensor(np.expand_dims(np.transpose(np.array(Image.open(image_file)),(2,0,1)),axis=0),dtype=torch.float).to(device)
+    image_body = image_file.split('.')[-2]
+    image_frame_ID = image_body.split('_')[-2].split('/')[-1]
+    if image_frame_ID in image_dic:
+      image_dic[image_frame_ID].append(image)
+    else:
+      image_dic[image_frame_ID] = [image]
+  image_ordered = collections.OrderedDict(sorted(image_dic.items()))
+  for key, value in image_ordered.items():
+    output_name = output_path + '/' + key
+    images = torch.stack(value,dim=0)
+    model_inputs = {'list_leveled_images': [images],'spat_lidar2img_trans': lidar2img_transes}
     _, _, _, _, last_layer_features = model(model_inputs)
-    last_layer_features_dic[batch_idx] = last_layer_features
-  try:
-    np.save(file_path, last_layer_features_dic)  # save cache for next time
-    file_path.with_suffix('.np.npy').rename(file_path)  # remove .npy suffix
-  except Exception:
-    exit(-1)
+    np.save(output_name, last_layer_features.cpu().detach().numpy())
   model.train()
 
 def main():
@@ -240,7 +246,7 @@ def main():
   if os.path.exists(checkpoint) and load_checkpoint:
     load_checkpoint(torch.load(checkpoint),bevformer,optimizer)
   
-  evaluate_and_save_last_layer_feature(eval_dataloader, bevformer, file_path)
+  evaluate_and_save_last_layer_feature(bevformer)
 
 if __name__ == "__main__":
   main()

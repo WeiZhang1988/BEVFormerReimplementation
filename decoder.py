@@ -51,6 +51,7 @@ class Decoder(nn.Module):
     assert embed_dims == self.embed_dims, "embed_dims of encoder output must equal to that of decoder input"
     encoder_feat = encoder_feat + self.NNP_keyvalue_pos
     features,reference_points,init_reference_points,listed_features = self.decoderlayer(encoder_feat,encoder_feat)
+    last_layer_features = listed_features[-1]
     segments, proto = self.segmenthead(listed_features)
     listed_classes = []
     listed_coords = []
@@ -77,7 +78,7 @@ class Decoder(nn.Module):
     # segments            (list of Tensor [bs, num_anchor, H, W, code_size + num_classes + num_masks])
     # proto               (Tensor [bs, num_masks, 2*H, 2*W])
     # last layer features (Tensor [bs, embed_dims, H, W])
-    return torch.stack(listed_classes), torch.stack(listed_coords), segments, proto, listed_features[-1]
+    return torch.stack(listed_classes), torch.stack(listed_coords), segments, proto, last_layer_features
   def inverse_sigmoid(self,x,eps=1e-5):
     """Inverse function of sigmoid.
     Args:
