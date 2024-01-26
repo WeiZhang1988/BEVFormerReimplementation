@@ -152,7 +152,8 @@ class EncoderLayer(nn.Module):
     self.NN_addNorm2    = AddAndNormLayer(None,embed_dims,device=device)
     self.NN_addNorm3    = AddAndNormLayer(None,embed_dims,device=device)
     self.NN_ffn         = nn.Linear(embed_dims,embed_dims,device=device)
-    
+    self.temp_key_hist     = [self.query for _ in range(temp_num_sequences)]
+    self.temp_value_hist   = [self.query for _ in range(temp_num_sequences)]
   def forward(self,spat_key,spat_value,spat_spatial_shapes=None,spat_lidar2img_trans=None):
     """
     Args:
@@ -165,8 +166,6 @@ class EncoderLayer(nn.Module):
     """
     # self.query [1(extends to bs), num_query, embed_dims]
     self.query             = self.NN_projQ(self.NNP_query_origin) + self.NNP_query_pos
-    self.temp_key_hist     = [self.query for _ in range(self.temp_num_sequences)]
-    self.temp_value_hist   = [self.query for _ in range(self.temp_num_sequences)]
     _,bs,_,_ = spat_key.shape
     ref_3d, ref_2d = self.cal_reference_points(self.query_Z,bs)
     spat_reference_points_cam, spat_bev_mask = self.sample_points(ref_3d, spat_lidar2img_trans)
