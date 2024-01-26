@@ -164,8 +164,6 @@ class DecoderLayer(nn.Module):
     # self.query [1(extends to bs), num_query, embed_dims]
     self.query             = self.NNP_query_origin + self.NNP_query_pos
     self.NN_ref_points     = nn.Linear(self.embed_dims, 3, device=device)
-    # self.reference_points [1(extends to bs), num_query, 3]
-    self.reference_points  = self.NN_ref_points(self.NNP_query_pos)
     self.NN_fullAttn       = FullAttention(full_dropout,full_embed_dims,full_num_heads,full_num_levels,full_num_points,device)
     self.NN_custAttn       = CustomAttention(custom_dropout,custom_embed_dims,custom_num_heads,custom_num_levels,custom_num_points,device)
     self.NN_addNorm1       = AddAndNormLayer(None,embed_dims,device=device)
@@ -185,6 +183,8 @@ class DecoderLayer(nn.Module):
       init_references_points    (Tensor             [bs, num_query, 3])
       listed_deocerlayer_feat   (list of Tensor [[bs, embed_dims, H, W], ... ])
     """
+    # self.reference_points [1(extends to bs), num_query, 3]
+    self.reference_points  = self.NN_ref_points(self.NNP_query_pos)
     bs, num_key, emded_dims = key.shape
     # self.query [1,  num_query, embed_dims]
     # ---->query [bs, num_query, embed_dims]
