@@ -143,7 +143,8 @@ class EncoderLayer(nn.Module):
     self.NN_projQ          = nn.Linear(query_C,temp_embed_dims).to(device)
     # self.NNP_query_pos [1(extends to bs), num_query, embed_dims]
     self.NNP_query_pos     = nn.Parameter(torch.ones(1,query_H*query_W,temp_embed_dims,device=device)*0.95)
-    
+    # self.query [1(extends to bs), num_query, embed_dims]
+    self.query             = self.NN_projQ(self.NNP_query_origin) + self.NNP_query_pos
     # self.temp_spatial_shapes [level(fixed to 1 here), 2]
     self.temp_spatial_shapes = torch.Tensor([[query_H, query_W]]).to(device)
     self.NN_tempAttn    = TemporalSelfAttention(temp_num_sequences,temp_dropout,temp_embed_dims,temp_num_heads,temp_num_levels,temp_num_points,device)
