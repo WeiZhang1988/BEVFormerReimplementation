@@ -96,10 +96,20 @@ class BEVLoss(nn.Module):
     lbox = torch.zeros(1, device=self.device)
     lobj = torch.zeros(1, device=self.device)
     lseg = torch.zeros(1, device=self.device)
+    print("targets value ", targets)
     tcls, tbox, indices, anchors, tidxs, xywhn = self.build_targets(segments, targets)  # targets
+    print("segments shape ", len(segments), "---", segments[0].shape)
+    print("targets shape ", targets.shape)
+    print("tcls shape ", len(tcls), "---", tcls[0].shape)
+    print("tbox shape ", len(tbox), "---", tbox[0].shape)
+    print("indices shape ", len(indices), "---", len(indices[0]))
+    print("anchors shape ", len(anchors), "---", anchors[0].shape)
+    print("tidxs shape ", len(tidxs), "---", tidxs[0].shape)
+    print("xywhn shape ", len(xywhn), "---", xywhn[0].shape)
     # Losses
     for i, seg in enumerate(segments):  # layer index, layer predictions
       b, a, gj, gi = indices[i]  # image, anchor, gridy, gridx
+      print("indices ",indices[i])
       tobj = torch.zeros(seg.shape[:4], dtype=seg.dtype, device=self.device)  # target obj
       n = b.shape[0]  # number of targets
       if n:
@@ -108,6 +118,10 @@ class BEVLoss(nn.Module):
         pxy = pxy.sigmoid() * 2 - 0.5
         pwh = (pwh.sigmoid() * 2) ** 2 * anchors[i]
         pbox = torch.cat((pxy, pwh), 1)  # predicted box
+        print("pxy shape ", pxy.shape)
+        print("pwh shape ", pwh.shape)
+        print("pbox shape ", pbox.shape)
+        exit()
         iou = bbox_iou(pbox, tbox[i], CIoU=True).squeeze()  # iou(prediction, target)
         lbox = lbox + (1.0 - iou).mean()  # iou loss
         # Objectness
@@ -167,6 +181,7 @@ class BEVLoss(nn.Module):
     else:
       ti = torch.arange(nt, device=self.device).float().view(1, nt).repeat(na, 1)
     targets = torch.cat((targets.repeat(na, 1, 1), ai[..., None], ti[..., None]), 2)  # append anchor indices
+    print("new targets ",targets.shape)
     g = 0.5  # bias
     off = torch.tensor(
       [
@@ -183,6 +198,7 @@ class BEVLoss(nn.Module):
       gain[2:6] = torch.tensor(shape)[[3, 2, 3, 2]]  # xyxy gain
       # Match targets to anchors
       t = targets * gain  # shape(3,n,7)
+      print("t0 ",t.shape)
       if nt:
         # Matches
         r = t[..., 4:6] / anchors[:, None]  # wh ratio
@@ -195,12 +211,15 @@ class BEVLoss(nn.Module):
         j, k = ((gxy % 1 < g) & (gxy > 1)).T
         l, m = ((gxi % 1 < g) & (gxi > 1)).T
         j = torch.stack((torch.ones_like(j), j, k, l, m))
+        print("t1 ",t.shape)
         t = t.repeat((5, 1, 1))[j]
+        print("t2 ",t.shape)
         offsets = (torch.zeros_like(gxy)[None] + off[:, None])[j]
       else:
         t = targets[0]
         offsets = 0
       # Define
+      print("t ",t.shape)
       bc, gxy, gwh, at = t.chunk(4, 1)  # (image, class), grid xy, grid wh, anchors
       (a, tidx), (b, c) = at.long().T, bc.long().T  # anchors, image, class
       gij = (gxy - offsets).long()

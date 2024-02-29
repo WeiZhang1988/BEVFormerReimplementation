@@ -104,13 +104,13 @@ data_lidar2image_trans    = torch.stack([torch.tensor([[1.,0.,0.,0.],[0.,1.,0.,0
                                          torch.tensor([[-1.,0.,0.,0.],[0.,-1.,0.,0.],[0.,0.,1.,2.4],[0.,0.,0.,1.]]),
                                          torch.tensor([[0.,1.,0.,0.],[-1.,0.,0.,0.],[0.,0.,1.,2.4],[0.,0.,0.,1.]])],dim=0)
 data_num_levels           = common_num_inputs_levels
-data_batch_size           = 2
+data_batch_size           = 4
 data_num_gpu              = torch.cuda.device_count()  # number of CUDA devices
 data_num_threads          = min([os.cpu_count() // max(data_num_gpu, 1), data_batch_size if data_batch_size > 1 else 0, 8])
 data_bev_size             = (256,256)
 data_overlap              = False
 data_pin_memory           = True
-data_shuffle              = True
+data_shuffle              = False
 data_drop_last            = False
 #dataset and dataloader parameters -->
 #<-- loss parameters
