@@ -70,8 +70,8 @@ class CarlaInstanceSemeantic2CocoLabelConverter:
           indices = np.where(combined_edge==np.uint64(id))
           if len(indices[0])>3:
             assert len(indices[0]) == len(indices[1]), "x y indices must have same length"
-            indices_x_flt = indices[0].astype(np.float128) / np.float128(H)
-            indices_y_flt = indices[1].astype(np.float128) / np.float128(W)
+            indices_y_flt = indices[0].astype(np.float128) / np.float128(H)
+            indices_x_flt = indices[1].astype(np.float128) / np.float128(W)
             indices = np.array([indices_x_flt,indices_y_flt]).flatten('F')
             tag_list = [tag] + (indices.tolist())
             tag_label.append(tag_list)

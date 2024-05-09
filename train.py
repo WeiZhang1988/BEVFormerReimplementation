@@ -155,7 +155,7 @@ def main():
                                         shuffle=config.data_shuffle,
                                         drop_last=config.data_drop_last,)
 
-  scheduler = scheduler = optim.lr_scheduler.OneCycleLR(optimizer=optimizer, pct_start=0.1, div_factor=1e3, 
+  scheduler = optim.lr_scheduler.OneCycleLR(optimizer=optimizer, pct_start=0.1, div_factor=1e3, 
                                     max_lr=1e-3, epochs=config.num_epochs, steps_per_epoch=len(train_dataloader))
   
   if os.path.exists(config.checkpoint) and config.load_checkpoint:
